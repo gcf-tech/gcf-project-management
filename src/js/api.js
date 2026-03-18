@@ -1,19 +1,35 @@
-/** Capa de datos: REST cuando hay BACKEND_URL; localStorage en modo offline. Nextcloud Deck opcional. */
+/** Capa de datos: REST + localStorage; Deck y auth vía backend. */
 
-import { CONFIG } from './config.js';
-import { STATE }  from './state.js';
-import { save }   from './storage.js';
+import { CONFIG }    from './config.js';
+import { STATE }     from './state.js';
+import { save }      from './storage.js';
 import { generateId } from './utils.js';
+import { getToken }  from './auth.js';
 
 async function apiFetch(path, options = {}) {
+    const token = getToken();
     const response = await fetch(`${CONFIG.BACKEND_URL}${path}`, {
-        headers: { 'Content-Type': 'application/json' },
-        ...options
+        headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
+        ...options,
     });
     if (!response.ok) {
         throw new Error(`API error ${response.status}: ${response.statusText}`);
     }
     return response.json();
+}
+
+async function deckFetch(path) {
+    const token = getToken();
+    const res = await fetch(`${CONFIG.BACKEND_BASE_URL}${path}`, {
+        headers: {
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+        },
+    });
+    if (!res.ok) throw new Error(`Deck error ${res.status}: ${res.statusText}`);
+    return res.json();
 }
 
 export async function fetchTasks() {
@@ -25,7 +41,7 @@ export async function saveTime(taskId, timeSpent, subtaskId = null, feedback = n
     if (CONFIG.BACKEND_URL) {
         await apiFetch(`/tasks/${taskId}/time`, {
             method: 'POST',
-            body: JSON.stringify({ timeSpent, subtaskId, feedback })
+            body: JSON.stringify({ timeSpent, subtaskId, feedback }),
         });
     }
 
@@ -51,18 +67,18 @@ export async function saveTime(taskId, timeSpent, subtaskId = null, feedback = n
 
 export async function createTask(data) {
     const newTask = {
-        id: generateId('task'),
+        id:           generateId('task'),
         progress:     0,
         timeSpent:    0,
         observations: [],
         subtasks:     [],
-        ...data
+        ...data,
     };
 
     if (CONFIG.BACKEND_URL) {
         const saved = await apiFetch('/tasks', {
             method: 'POST',
-            body: JSON.stringify(newTask)
+            body: JSON.stringify(newTask),
         });
         STATE.tasks.push(saved);
         save();
@@ -78,7 +94,7 @@ export async function updateColumn(taskId, column) {
     if (CONFIG.BACKEND_URL) {
         await apiFetch(`/tasks/${taskId}`, {
             method: 'PATCH',
-            body: JSON.stringify({ column })
+            body: JSON.stringify({ column }),
         });
     }
 
@@ -101,24 +117,10 @@ export async function completeTask(taskId) {
     save();
 }
 
-export async function fetchDeckCards() {
-    if (!CONFIG.NEXTCLOUD_URL || !CONFIG.NEXTCLOUD_BOARD_ID) return [];
+export async function fetchDeckBoards() {
+    return deckFetch('/api/deck/boards');
+}
 
-    const response = await fetch(
-        `${CONFIG.NEXTCLOUD_URL}/index.php/apps/deck/api/v1.0/boards/${CONFIG.NEXTCLOUD_BOARD_ID}/stacks`,
-        {
-            headers: {
-                'OCS-APIREQUEST': 'true',
-                'Accept': 'application/json'
-            },
-            credentials: 'include'
-        }
-    );
-
-    if (!response.ok) {
-        throw new Error(`Nextcloud Deck error ${response.status}: ${response.statusText}`);
-    }
-
-    const stacks = await response.json();
-    return stacks.flatMap(stack => stack.cards ?? []);
+export async function fetchDeckCards(boardId) {
+    return deckFetch(`/api/deck/boards/${boardId}/cards`);
 }

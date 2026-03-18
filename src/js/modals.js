@@ -1,9 +1,9 @@
 /** Modales: nueva tarea/actividad, importar Deck, detalle de tarea. */
 
-import { STATE }                        from './state.js';
-import { createTask, fetchDeckCards }   from './api.js';
-import { save }                         from './storage.js';
-import { renderBoard }                  from './render.js';
+import { STATE }                              from './state.js';
+import { createTask, fetchDeckBoards, fetchDeckCards } from './api.js';
+import { save }                               from './storage.js';
+import { renderBoard }                        from './render.js';
 import { formatTime, formatDate, isOverdue, generateId } from './utils.js';
 
 let _deckCards = [];
@@ -19,15 +19,15 @@ function _openModal(modalId) {
 export function openNewTaskModal(type) {
     STATE.currentTaskType = type;
 
-    document.getElementById('modalNewTaskTitle').textContent    = type === 'activity' ? 'New Activity' : 'New Task';
-    document.getElementById('activityTypeGroup').style.display  = type === 'activity' ? 'block' : 'none';
-    document.getElementById('subtasksGroup').style.display      = type === 'activity' ? 'none'  : 'block';
+    document.getElementById('modalNewTaskTitle').textContent   = type === 'activity' ? 'New Activity' : 'New Task';
+    document.getElementById('activityTypeGroup').style.display = type === 'activity' ? 'block' : 'none';
+    document.getElementById('subtasksGroup').style.display     = type === 'activity' ? 'none'  : 'block';
 
-    document.getElementById('inputTaskName').value     = '';
-    document.getElementById('inputStartDate').value    = new Date().toISOString().split('T')[0];
-    document.getElementById('inputDeadline').value     = '';
-    document.getElementById('inputPriority').value     = 'medium';
-    document.getElementById('inputDescription').value  = '';
+    document.getElementById('inputTaskName').value    = '';
+    document.getElementById('inputStartDate').value   = new Date().toISOString().split('T')[0];
+    document.getElementById('inputDeadline').value    = '';
+    document.getElementById('inputPriority').value    = 'medium';
+    document.getElementById('inputDescription').value = '';
     document.getElementById('subtasksContainer').innerHTML = '';
 
     _openModal('modalNewTask');
@@ -62,7 +62,7 @@ export async function submitNewTask() {
             id:        generateId('sub'),
             text:      raw,
             completed: false,
-            timeSpent: 0
+            timeSpent: 0,
         }));
 
     await createTask({
@@ -76,48 +76,112 @@ export async function submitNewTask() {
         activityType: STATE.currentTaskType === 'activity'
             ? document.getElementById('inputActivityType').value
             : null,
-        subtasks
+        subtasks,
     });
 
     closeModal('modalNewTask');
     renderBoard();
 }
 
+// ---------------------------------------------------------------------------
+// Modal: Importar desde Nextcloud Deck
+// ---------------------------------------------------------------------------
+
+/**
+ * Abre el modal de importación y carga la lista de boards del usuario.
+ * El usuario primero elige un board; luego se cargan sus tarjetas.
+ */
 export async function openImportDeckModal() {
     STATE.selectedDeckCards.clear();
     _deckCards = [];
 
-    const listEl = document.getElementById('deckList');
-    listEl.innerHTML = '<p class="text-center text-muted">Loading cards from Deck...</p>';
+    const content = document.getElementById('deckModalContent');
+    content.innerHTML = _loadingHtml('Loading your boards...');
     _openModal('modalImportDeck');
 
     try {
-        _deckCards = await fetchDeckCards();
+        const boards = await fetchDeckBoards();
 
-        if (_deckCards.length === 0) {
-            listEl.innerHTML = `
+        if (boards.length === 0) {
+            content.innerHTML = `
                 <p class="text-center text-muted">
-                    No cards available.<br>
-                    Configure <code>NEXTCLOUD_URL</code> and <code>NEXTCLOUD_BOARD_ID</code> in <code>js/config.js</code>.
+                    No boards found in your Nextcloud Deck account.
                 </p>`;
             return;
         }
 
-        listEl.innerHTML = _deckCards.map(card => `
-            <div class="deck-item" data-deck-id="${card.id}" onclick="toggleDeckSelection('${card.id}')">
-                <div class="deck-item-checkbox">
-                    <i class="fas fa-check" style="display:none;"></i>
-                </div>
-                <div class="deck-item-content">
-                    <div class="deck-item-title">${card.title}</div>
-                    <div class="deck-item-meta">
-                        ${card.duedate ? `Due: ${formatDate(card.duedate.split('T')[0])}` : 'No deadline'}
-                    </div>
-                </div>
-            </div>`).join('');
+        content.innerHTML = `
+            <div class="form-group mb-2">
+                <label class="form-label" for="deckBoardSelect">
+                    <i class="fas fa-columns"></i> Select a board
+                </label>
+                <select id="deckBoardSelect" class="form-select"
+                        onchange="selectDeckBoard(this.value)">
+                    <option value="">-- Choose a board --</option>
+                    ${boards.map(b => `
+                        <option value="${b.id}">${_boardTitle(b)}</option>
+                    `).join('')}
+                </select>
+            </div>
+            <div id="deckCardList"></div>`;
 
     } catch (err) {
-        listEl.innerHTML = `<p class="text-center text-danger">Error: ${err.message}</p>`;
+        content.innerHTML = `<p class="text-center text-danger">
+            <i class="fas fa-exclamation-circle"></i> ${err.message}
+        </p>`;
+    }
+}
+
+export async function selectDeckBoard(boardId) {
+    STATE.selectedDeckCards.clear();
+    _deckCards = [];
+
+    const cardList = document.getElementById('deckCardList');
+    if (!boardId) {
+        cardList.innerHTML = '';
+        return;
+    }
+
+    cardList.innerHTML = _loadingHtml('Loading cards...');
+
+    try {
+        _deckCards = await fetchDeckCards(boardId);
+
+        if (_deckCards.length === 0) {
+            cardList.innerHTML = `
+                <p class="text-center text-muted">
+                    This board has no cards yet.
+                </p>`;
+            return;
+        }
+
+        cardList.innerHTML = `
+            <div class="form-label mb-1" style="margin-top:.75rem;">
+                <i class="fas fa-credit-card"></i>
+                Cards (${_deckCards.length}) — click to select
+            </div>
+            <div class="deck-list">
+                ${_deckCards.map(card => `
+                    <div class="deck-item" data-deck-id="${card.id}"
+                         onclick="toggleDeckSelection('${card.id}')">
+                        <div class="deck-item-checkbox">
+                            <i class="fas fa-check" style="display:none;"></i>
+                        </div>
+                        <div class="deck-item-content">
+                            <div class="deck-item-title">${card.title}</div>
+                            <div class="deck-item-meta">
+                                ${card.duedate
+                                    ? `<i class="fas fa-calendar"></i> ${formatDate(card.duedate.split('T')[0])}`
+                                    : 'No deadline'}
+                            </div>
+                        </div>
+                    </div>`).join('')}
+            </div>`;
+
+    } catch (err) {
+        cardList.innerHTML = `<p class="text-center text-danger">
+            <i class="fas fa-exclamation-circle"></i> ${err.message}
+        </p>`;
     }
 }
 
@@ -154,7 +218,7 @@ export async function importSelectedDeckCards() {
             priority:    'medium',
             startDate:   new Date().toISOString().split('T')[0],
             deadline:    card.duedate ? card.duedate.split('T')[0] : null,
-            subtasks:    []
+            subtasks:    [],
         });
     }
 
@@ -247,4 +311,14 @@ export function toggleSubtask(taskId, subtaskId) {
     save();
     openTaskDetail(taskId);
     renderBoard();
+}
+
+function _loadingHtml(msg) {
+    return `<p class="text-center text-muted">
+        <i class="fas fa-spinner fa-spin"></i> ${msg}
+    </p>`;
+}
+
+function _boardTitle(board) {
+    return board.title || `Board ${board.id}`;
 }

@@ -1,11 +1,12 @@
-/** Punto de entrada: init, carga de datos y funciones expuestas en window para onclick. */
+/** Punto de entrada: OAuth, carga de datos, funciones en window para onclick. */
 
-import { CONFIG }          from './config.js';
 import { STATE }           from './state.js';
 import { load }            from './storage.js';
 import { fetchTasks }      from './api.js';
 import { renderBoard }     from './render.js';
 import { setupDragAndDrop } from './dragDrop.js';
+import { initAuth }        from './auth.js';
+import { CONFIG }          from './config.js';
 
 import {
     openNewTaskModal,
@@ -16,7 +17,8 @@ import {
     submitNewTask,
     toggleSubtask,
     toggleDeckSelection,
-    importSelectedDeckCards
+    importSelectedDeckCards,
+    selectDeckBoard,
 } from './modals.js';
 
 import {
@@ -24,7 +26,7 @@ import {
     pauseTimer,
     stopTimer,
     cancelPause,
-    confirmPause
+    confirmPause,
 } from './timer.js';
 
 Object.assign(window, {
@@ -37,17 +39,27 @@ Object.assign(window, {
     toggleSubtask,
     toggleDeckSelection,
     importSelectedDeckCards,
+    selectDeckBoard,
     startTimer,
     pauseTimer,
     stopTimer,
     cancelPause,
-    confirmPause
+    confirmPause,
 });
 
 async function init() {
-    const { name, initials } = CONFIG.USER;
-    document.getElementById('userAvatar').textContent = initials || '?';
-    document.getElementById('userName').textContent   = name     || 'User';
+    const user = await initAuth();
+
+    if (!user) {
+        if (!CONFIG.NEXTCLOUD_OAUTH_CLIENT_ID) {
+            document.getElementById('userAvatar').textContent = '?';
+            document.getElementById('userName').textContent   = 'User';
+        }
+        if (CONFIG.NEXTCLOUD_OAUTH_CLIENT_ID) return;
+    } else {
+        document.getElementById('userAvatar').textContent = user.initials  || '?';
+        document.getElementById('userName').textContent   = user.displayname || user.id || 'User';
+    }
 
     load();
 
@@ -55,7 +67,7 @@ async function init() {
         try {
             STATE.tasks = await fetchTasks();
         } catch (err) {
-            console.error('[init] Failed to fetch tasks from backend:', err);
+            console.error('[init] Error al cargar tareas del backend:', err);
         }
     }
 
