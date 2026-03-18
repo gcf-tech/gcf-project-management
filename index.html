@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Project Management</title>
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+      crossorigin="anonymous"
+    />
+  </head>
+  <body>
+    <header class="header">
+      <div class="header-content">
+        <div class="header-left">
+          <div class="logo">PM</div>
+          <div>
+            <div class="header-title">Project Management</div>
+            <div class="header-subtitle">Personal Dashboard</div>
+          </div>
+        </div>
+        <div class="header-actions">
+          <button class="btn btn-secondary" onclick="openNewTaskModal('activity')">
+            <i class="fas fa-bolt"></i> New Activity
+          </button>
+          <button class="btn btn-secondary" onclick="openImportDeckModal()">
+            <i class="fas fa-cloud-download-alt"></i> Import from Deck
+          </button>
+          <button class="btn btn-primary" onclick="openNewTaskModal('project')">
+            <i class="fas fa-plus"></i> New Task
+          </button>
+          <div class="user-info">
+            <div class="user-avatar" id="userAvatar">?</div>
+            <span class="user-name" id="userName">User</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <section class="kpi-section">
+      <div class="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <div class="kpi-icon primary"><i class="fas fa-tasks"></i></div>
+            <span class="kpi-label">Active Tasks</span>
+          </div>
+          <div class="kpi-value" id="kpiTareasActivas">0</div>
+          <div class="kpi-subtext">In progress</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <div class="kpi-icon warning"><i class="fas fa-clock"></i></div>
+            <span class="kpi-label">Total Time</span>
+          </div>
+          <div class="kpi-value" id="kpiTiempoTotal">00:00:00</div>
+          <div class="kpi-subtext">This period</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <div class="kpi-icon success"><i class="fas fa-chart-line"></i></div>
+            <span class="kpi-label">Effectiveness</span>
+          </div>
+          <div class="kpi-value" id="kpiEfectividad">0%</div>
+          <div class="kpi-subtext">On-time delivery</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-header">
+            <div class="kpi-icon danger"><i class="fas fa-check-circle"></i></div>
+            <span class="kpi-label">Completed</span>
+          </div>
+          <div class="kpi-value" id="kpiCompletadas">0</div>
+          <div class="kpi-subtext">All time</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="kanban-section">
+      <div class="kanban-board" id="kanbanBoard">
+        <div class="kanban-column" data-column="actively-working">
+          <div class="column-header">
+            <span class="column-title">
+              <i class="fas fa-briefcase"></i> Actively Working
+            </span>
+            <span class="column-count" id="countActivelyWorking">0</span>
+          </div>
+          <div class="column-body" id="columnActivelyWorking"></div>
+        </div>
+
+        <div class="kanban-column" data-column="working-now">
+          <div class="column-header">
+            <span class="column-title">
+              <i class="fas fa-play-circle"></i> Working Right Now
+            </span>
+            <span class="column-count" id="countWorkingNow">0</span>
+          </div>
+          <div class="column-body" id="columnWorkingNow"></div>
+        </div>
+
+        <div class="kanban-column" data-column="activities">
+          <div class="column-header">
+            <span class="column-title">
+              <i class="fas fa-calendar-alt"></i> Activities
+            </span>
+            <span class="column-count" id="countActivities">0</span>
+          </div>
+          <div class="column-body" id="columnActivities"></div>
+        </div>
+
+      </div>
+    </section>
+
+    <div class="modal-overlay" id="modalNewTask">
+      <div class="modal">
+        <div class="modal-header">
+          <h2 class="modal-title" id="modalNewTaskTitle">New Task</h2>
+          <button class="modal-close" onclick="closeModal('modalNewTask')" aria-label="Close">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group" id="activityTypeGroup" style="display:none">
+            <label class="form-label" for="inputActivityType">Activity Type</label>
+            <select id="inputActivityType" class="form-select">
+              <option value="meeting">Meeting</option>
+              <option value="training">Training</option>
+              <option value="event">Event</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="inputTaskName">
+              Name <span style="color:var(--color-danger)">*</span>
+            </label>
+            <input type="text" id="inputTaskName" class="form-input" placeholder="Task name..." />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="inputDescription">Description</label>
+            <textarea id="inputDescription" class="form-textarea" placeholder="Optional description..."></textarea>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label" for="inputStartDate">Start Date</label>
+              <input type="date" id="inputStartDate" class="form-input" />
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="inputDeadline">Deadline</label>
+              <input type="date" id="inputDeadline" class="form-input" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="inputPriority">Priority</label>
+            <select id="inputPriority" class="form-select">
+              <option value="low">Low</option>
+              <option value="medium" selected>Medium</option>
+              <option value="high">High</option>
+            </select>
+          </div>
+          <div id="subtasksGroup">
+            <div class="form-group" style="margin-bottom:.5rem">
+              <label class="form-label">Subtasks</label>
+            </div>
+            <div id="subtasksContainer"></div>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="addSubtaskInput()">
+              <i class="fas fa-plus"></i> Add Subtask
+            </button>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('modalNewTask')">Cancel</button>
+          <button class="btn btn-primary" onclick="submitNewTask()">
+            <i class="fas fa-check"></i> Create
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="modalImportDeck">
+      <div class="modal">
+        <div class="modal-header">
+          <h2 class="modal-title">Import from Nextcloud Deck</h2>
+          <button class="modal-close" onclick="closeModal('modalImportDeck')" aria-label="Close">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="deck-list" id="deckList"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('modalImportDeck')">Cancel</button>
+          <button class="btn btn-primary" onclick="importSelectedDeckCards()">
+            <i class="fas fa-cloud-download-alt"></i> Import Selected
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="modalTaskDetail">
+      <div class="modal">
+        <div class="modal-header">
+          <h2 class="modal-title" id="modalDetailTitle">Task Detail</h2>
+          <button class="modal-close" onclick="closeModal('modalTaskDetail')" aria-label="Close">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div class="modal-body" id="modalDetailBody"></div>
+        <div class="modal-footer" id="modalDetailFooter"></div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
