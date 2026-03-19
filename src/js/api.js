@@ -92,7 +92,7 @@ export async function createTask(data) {
 
 export async function updateColumn(taskId, column) {
     if (CONFIG.BACKEND_URL) {
-        await apiFetch(`/tareas/${taskId}`, {
+        await apiFetch(`/tareas/${taskId}/columna`, {
             method: 'PATCH',
             body: JSON.stringify({ column }),
         });
@@ -105,7 +105,7 @@ export async function updateColumn(taskId, column) {
 
 export async function completeTask(taskId) {
     if (CONFIG.BACKEND_URL) {
-        await apiFetch(`/tareas/${taskId}/complete`, { method: 'POST' });
+        await apiFetch(`/tareas/${taskId}/finalizar`, { method: 'POST' });
     }
 
     const task = STATE.tasks.find(t => t.id === taskId);
