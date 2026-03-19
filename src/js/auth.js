@@ -45,7 +45,7 @@ function _saveUser(user) {
 }
 
 function _redirectUri() {
-    return window.location.origin + window.location.pathname;
+    return 'https://portaltest.gcf.group/app/';
 }
 
 function _buildAuthUrl() {
