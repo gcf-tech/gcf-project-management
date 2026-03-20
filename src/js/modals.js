@@ -66,27 +66,27 @@ export async function submitNewTask() {
             timeSpent: 0,
         }));
 
-    await createTask({
-        title:        name,
-        description:  document.getElementById('inputDescription').value.trim(),
-        column:       STATE.currentTaskType === 'activity' ? 'activities' : 'actively-working',
-        type:         STATE.currentTaskType,
-        priority:     document.getElementById('inputPriority').value,
-        startDate:    document.getElementById('inputStartDate').value,
-        deadline:     document.getElementById('inputDeadline').value || null,
-        activityType: STATE.currentTaskType === 'activity'
-            ? document.getElementById('inputActivityType').value
-            : null,
-        subtasks,
-    });
+    try {
+        await createTask({
+            title:        name,
+            description:  document.getElementById('inputDescription').value.trim(),
+            column:       STATE.currentTaskType === 'activity' ? 'activities' : 'actively-working',
+            type:         STATE.currentTaskType,
+            priority:     document.getElementById('inputPriority').value,
+            startDate:    document.getElementById('inputStartDate').value,
+            deadline:     document.getElementById('inputDeadline').value || null,
+            activityType: STATE.currentTaskType === 'activity'
+                ? document.getElementById('inputActivityType').value
+                : null,
+            subtasks,
+        });
+    } catch (err) {
+        console.error('[submitNewTask] Error al crear tarea:', err);
+    }
 
     if (CONFIG.BACKEND_URL) {
         try {
             const fetched = await fetchTasks();
-            // Si `fetchTasks()` viene vacío, típicamente es porque el backend
-            // está filtrando por auth y la petición GET no llega con token.
-            // No sobreescribimos el estado local para no "perder" la card
-            // recién creada/importada (createTask ya la agrega al STATE).
             if (Array.isArray(fetched) && fetched.length > 0) {
                 STATE.tasks = fetched;
             }
@@ -248,18 +248,22 @@ export async function importSelectedDeckCards() {
         const card = _deckCards.find(c => String(c.id) === String(deckId));
         if (!card) continue;
 
-        await createTask({
-            deck_card_id: card.id,
-            title:        card.title,
-            description:  card.description ?? '',
-            column:       'actively-working',
-            type:         'project',
-            priority:     'medium',
-            startDate:    new Date().toISOString().split('T')[0],
-            deadline:     card.duedate ? card.duedate.split('T')[0] : null,
-            subtasks:     [],
-        });
-        count++;
+        try {
+            await createTask({
+                deck_card_id: card.id,
+                title:        card.title,
+                description:  card.description ?? '',
+                column:       'actively-working',
+                type:         'project',
+                priority:     'medium',
+                startDate:    new Date().toISOString().split('T')[0],
+                deadline:     card.duedate ? card.duedate.split('T')[0] : null,
+                subtasks:     [],
+            });
+            count++;
+        } catch (err) {
+            console.error(`[importSelectedDeckCards] Error al importar card ${deckId}:`, err);
+        }
     }
 
     if (CONFIG.BACKEND_URL) {

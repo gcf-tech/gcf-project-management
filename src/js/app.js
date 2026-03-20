@@ -63,9 +63,12 @@ async function init() {
 
     load();
 
-    if (STATE.tasks.length === 0 && CONFIG.BACKEND_URL) {
+    if (CONFIG.BACKEND_URL) {
         try {
-            STATE.tasks = await fetchTasks();
+            const fetched = await fetchTasks();
+            if (Array.isArray(fetched) && fetched.length > 0) {
+                STATE.tasks = fetched;
+            }
         } catch (err) {
             console.error('[init] Error al cargar tareas del backend:', err);
         }

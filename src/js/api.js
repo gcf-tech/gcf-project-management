@@ -18,7 +18,8 @@ async function apiFetch(path, options = {}) {
     if (!response.ok) {
         throw new Error(`API error ${response.status}: ${response.statusText}`);
     }
-    return response.json();
+    const text = await response.text();
+    return text ? JSON.parse(text) : {};
 }
 
 async function deckFetch(path) {
@@ -102,7 +103,8 @@ export async function createTask(data) {
         });
 
         // Backend returns: { success: True, task: <Task> }
-        const task = saved?.task ?? saved;
+        // Fallback al objeto local si el backend no devuelve el task.
+        const task = saved?.task ?? (saved?.id ? saved : newTask);
         STATE.tasks.push(task);
         save();
         return task;
