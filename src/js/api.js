@@ -41,7 +41,14 @@ export async function saveTime(taskId, timeSpent, subtaskId = null, feedback = n
     if (CONFIG.BACKEND_URL) {
         await apiFetch(`/tareas/${taskId}/time`, {
             method: 'POST',
-            body: JSON.stringify({ timeSpent, subtaskId, feedback }),
+            // Backend: POST /api/proyectos/tareas/{task_id}/time
+            // Espera `tiempoInvertido` y `subtaskId` (ver record_time_by_path).
+            body: JSON.stringify({
+                tareaId: taskId,           // alineado al modelo TimeRecord (alias: tareaId)
+                tiempoInvertido: timeSpent,
+                subtaskId,
+                feedback,
+            }),
         });
     }
 
@@ -76,13 +83,29 @@ export async function createTask(data) {
     };
 
     if (CONFIG.BACKEND_URL) {
+        // Backend expects TaskCreate shape (no id/progress/timeSpent/observations wrapper).
+        const payload = {
+            title:        newTask.title,
+            description:  newTask.description ?? "",
+            column:       newTask.column,
+            type:         newTask.type,
+            priority:     newTask.priority ?? "medium",
+            startDate:    newTask.startDate ?? null,
+            deadline:     newTask.deadline ?? null,
+            activityType: newTask.activityType ?? null,
+            subtasks:     newTask.subtasks ?? [],
+        };
+
         const saved = await apiFetch('/tareas', {
             method: 'POST',
-            body: JSON.stringify(newTask),
+            body: JSON.stringify(payload),
         });
-        STATE.tasks.push(saved);
+
+        // Backend returns: { success: True, task: <Task> }
+        const task = saved?.task ?? saved;
+        STATE.tasks.push(task);
         save();
-        return saved;
+        return task;
     }
 
     STATE.tasks.push(newTask);
