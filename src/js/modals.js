@@ -1,10 +1,10 @@
 /** Modales: nueva tarea/actividad, importar Deck, detalle de tarea. */
 
 import { STATE }                              from './state.js';
-import { createTask, fetchTasks, fetchDeckBoards, fetchDeckCards } from './api.js';
+import { createTask, updateTask, deleteTask, setTaskTime, fetchTasks, fetchDeckBoards, fetchDeckCards } from './api.js';
 import { save }                               from './storage.js';
 import { renderBoard }                        from './render.js';
-import { formatTime, formatDate, isOverdue, generateId } from './utils.js';
+import { formatTime, formatDate, isOverdue, generateId, formatTimeCompact, formatLogDate } from './utils.js';
 import { CONFIG }                             from './config.js';
 
 let _deckCards = [];
@@ -19,6 +19,7 @@ function _openModal(modalId) {
 
 export function openNewTaskModal(type) {
     STATE.currentTaskType = type;
+    STATE.editingTaskId = null;
 
     document.getElementById('modalNewTaskTitle').textContent   = type === 'activity' ? 'New Activity' : 'New Task';
     document.getElementById('activityTypeGroup').style.display = type === 'activity' ? 'block' : 'none';
@@ -30,6 +31,53 @@ export function openNewTaskModal(type) {
     document.getElementById('inputPriority').value    = 'medium';
     document.getElementById('inputDescription').value = '';
     document.getElementById('subtasksContainer').innerHTML = '';
+
+    const submitBtn = document.querySelector('#modalNewTask .modal-footer .btn-primary');
+    if (submitBtn) submitBtn.innerHTML = '<i class="fas fa-check"></i> Create';
+
+    _openModal('modalNewTask');
+}
+
+export function openEditTaskModal(taskId) {
+    const task = STATE.tasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    STATE.editingTaskId = taskId;
+    STATE.currentTaskType = task.type;
+
+    const isActivity = task.type === 'activity';
+
+    document.getElementById('modalNewTaskTitle').textContent   = isActivity ? 'Edit Activity' : 'Edit Task';
+    document.getElementById('activityTypeGroup').style.display = isActivity ? 'block' : 'none';
+    document.getElementById('subtasksGroup').style.display     = isActivity ? 'none'  : 'block';
+
+    document.getElementById('inputTaskName').value    = task.title ?? '';
+    document.getElementById('inputDescription').value = task.description ?? '';
+    document.getElementById('inputStartDate').value   = task.startDate ?? '';
+    document.getElementById('inputDeadline').value    = task.deadline ?? '';
+    document.getElementById('inputPriority').value    = task.priority ?? 'medium';
+
+    if (isActivity) {
+        const actTypeEl = document.getElementById('inputActivityType');
+        if (actTypeEl && task.activityType) actTypeEl.value = task.activityType;
+    }
+
+    // Populate subtasks
+    const container = document.getElementById('subtasksContainer');
+    container.innerHTML = '';
+    (task.subtasks ?? []).forEach((sub, index) => {
+        const div = document.createElement('div');
+        div.style.cssText = 'display: flex; gap: 0.5rem; margin-bottom: 0.5rem;';
+        div.innerHTML = `
+            <input type="text" class="form-input subtask-input" placeholder="Subtask ${index + 1}..." value="${sub.text ?? ''}">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="this.parentElement.remove()">
+                <i class="fas fa-times"></i>
+            </button>`;
+        container.appendChild(div);
+    });
+
+    const submitBtn = document.querySelector('#modalNewTask .modal-footer .btn-primary');
+    if (submitBtn) submitBtn.innerHTML = '<i class="fas fa-save"></i> Save Changes';
 
     _openModal('modalNewTask');
 }
@@ -66,6 +114,54 @@ export async function submitNewTask() {
             timeSpent: 0,
         }));
 
+    const isEditing = !!STATE.editingTaskId;
+
+    if (isEditing) {
+        const taskId = STATE.editingTaskId;
+        const existingTask = STATE.tasks.find(t => t.id === taskId);
+
+        const data = {
+            title:        name,
+            description:  document.getElementById('inputDescription').value.trim(),
+            column:       existingTask?.column ?? (STATE.currentTaskType === 'activity' ? 'activities' : 'actively-working'),
+            type:         STATE.currentTaskType,
+            priority:     document.getElementById('inputPriority').value,
+            startDate:    document.getElementById('inputStartDate').value,
+            deadline:     document.getElementById('inputDeadline').value || null,
+            activityType: STATE.currentTaskType === 'activity'
+                ? document.getElementById('inputActivityType').value
+                : null,
+            subtasks,
+        };
+
+        try {
+            await updateTask(taskId, data);
+        } catch (err) {
+            console.error('[submitNewTask] Error al actualizar tarea:', err);
+            alert('Error al actualizar la tarea. Por favor intenta de nuevo.');
+            return;
+        }
+
+        if (CONFIG.BACKEND_URL) {
+            try {
+                const tareas = await fetchTasks();
+                if (Array.isArray(tareas)) STATE.tasks = tareas;
+            } catch (err) {
+                console.error('[submitNewTask] Error al recargar tareas:', err);
+            }
+        }
+
+        renderBoard();
+        closeModal('modalNewTask');
+
+        const submitBtn = document.querySelector('#modalNewTask .modal-footer .btn-primary');
+        if (submitBtn) submitBtn.innerHTML = '<i class="fas fa-check"></i> Create';
+
+        STATE.editingTaskId = null;
+        return;
+    }
+
+    // Create mode
     try {
         await createTask({
             title:        name,
@@ -98,6 +194,30 @@ export async function submitNewTask() {
 
     renderBoard();
     closeModal('modalNewTask');
+}
+
+export async function confirmDeleteTask(taskId) {
+    const confirmed = confirm('¿Está seguro que desea eliminar esta tarjeta?');
+    if (!confirmed) return;
+
+    try {
+        await deleteTask(taskId);
+    } catch (err) {
+        console.error('[confirmDeleteTask] Error al eliminar tarea:', err);
+        alert('Error al eliminar la tarea. Por favor intenta de nuevo.');
+        return;
+    }
+
+    if (CONFIG.BACKEND_URL) {
+        try {
+            const tareas = await fetchTasks();
+            if (Array.isArray(tareas)) STATE.tasks = tareas;
+        } catch (err) {
+            console.error('[confirmDeleteTask] Error al recargar tareas:', err);
+        }
+    }
+
+    renderBoard();
 }
 
 // ---------------------------------------------------------------------------
@@ -314,10 +434,45 @@ export function openTaskDetail(taskId) {
         </div>
         <div class="mb-2">
             <span class="form-label">Time invested</span>
-            <p style="font-size:1.5rem; font-weight:600; color:var(--color-primary);">
-                ${formatTime(task.timeSpent)}
-            </p>
+            <div style="display:flex; align-items:center; gap:0.75rem;">
+                <span id="detail-time-display" style="font-size:1.5rem; font-weight:600; color:var(--color-primary);">
+                    ${formatTime(task.timeSpent)}
+                </span>
+                <button class="task-menu-btn" onclick="openTimeEdit('${task.id}')" title="Edit time">
+                    <i class="fas fa-pencil-alt"></i>
+                </button>
+            </div>
+            <div id="detail-time-edit" style="display:none; margin-top:0.5rem;">
+                <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+                    <input type="number" id="detail-time-h" class="form-input" style="width:68px;"
+                           min="0" placeholder="h" value="${Math.floor(task.timeSpent / 3600)}">
+                    <span>h</span>
+                    <input type="number" id="detail-time-m" class="form-input" style="width:68px;"
+                           min="0" max="59" placeholder="m" value="${Math.floor((task.timeSpent % 3600) / 60)}">
+                    <span>m</span>
+                    <input type="number" id="detail-time-s" class="form-input" style="width:68px;"
+                           min="0" max="59" placeholder="s" value="${task.timeSpent % 60}">
+                    <span>s</span>
+                    <button class="btn btn-primary btn-sm" onclick="saveTimeEdit('${task.id}')">
+                        <i class="fas fa-save"></i> Save
+                    </button>
+                    <button class="btn btn-secondary btn-sm" onclick="cancelTimeEdit()">Cancel</button>
+                </div>
+            </div>
         </div>
+        ${task.timeLog && task.timeLog.length > 0 ? `
+        <div class="mb-2">
+            <span class="form-label">Time log</span>
+            <div class="time-log mt-1">
+                ${[...task.timeLog]
+                    .sort((a, b) => b.date.localeCompare(a.date))
+                    .map(entry => `
+                        <div class="time-log-entry">
+                            <span class="time-log-date">${formatLogDate(entry.date)}</span>
+                            <span class="time-log-duration">${formatTimeCompact(entry.seconds)}</span>
+                        </div>`).join('')}
+            </div>
+        </div>` : ''}
         ${task.subtasks.length > 0 ? `
             <div class="mb-2">
                 <span class="form-label">
@@ -370,6 +525,37 @@ export function toggleSubtask(taskId, subtaskId) {
 
     save();
     openTaskDetail(taskId);
+    renderBoard();
+}
+
+// ---------------------------------------------------------------------------
+// Edición manual de tiempo
+// ---------------------------------------------------------------------------
+
+export function openTimeEdit(taskId) {
+    document.getElementById('detail-time-edit').style.display = 'flex';
+}
+
+export function cancelTimeEdit() {
+    document.getElementById('detail-time-edit').style.display = 'none';
+}
+
+export async function saveTimeEdit(taskId) {
+    const h = Math.max(0, parseInt(document.getElementById('detail-time-h').value, 10) || 0);
+    const m = Math.max(0, Math.min(59, parseInt(document.getElementById('detail-time-m').value, 10) || 0));
+    const s = Math.max(0, Math.min(59, parseInt(document.getElementById('detail-time-s').value, 10) || 0));
+    const newSeconds = h * 3600 + m * 60 + s;
+
+    try {
+        await setTaskTime(taskId, newSeconds);
+    } catch (err) {
+        console.error('[saveTimeEdit] Error al actualizar tiempo:', err);
+        alert('Error al guardar el tiempo. Por favor intenta de nuevo.');
+        return;
+    }
+
+    document.getElementById('detail-time-display').textContent = formatTime(newSeconds);
+    document.getElementById('detail-time-edit').style.display = 'none';
     renderBoard();
 }
 

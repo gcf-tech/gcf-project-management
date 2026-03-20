@@ -6,43 +6,57 @@ import { renderBoard }              from './render.js';
 import { closeModal }               from './modals.js';
 import { formatTime }               from './utils.js';
 
-export function startTimer(taskId) {
-    if (STATE.activeTimer && STATE.activeTimer.taskId !== taskId) {
-        alert('You already have an active timer. Pause or stop it first.');
-        return;
-    }
+// Umbrales de notificación: proyecto 3h, actividad 1h
+const NOTIFY_THRESHOLD = { project: 3 * 3600, activity: 1 * 3600 };
 
+export function startTimer(taskId) {
     const task = STATE.tasks.find(t => t.id === taskId);
     if (!task) return;
 
+    const type = task.type;
+
+    if (STATE.timers[type] && STATE.timers[type].taskId !== taskId) {
+        alert('You already have an active timer for this type. Pause or stop it first.');
+        return;
+    }
+
     const selectEl = document.getElementById(`subtask-select-${taskId}`);
 
-    STATE.activeTimer = {
+    STATE.timers[type] = {
         taskId,
-        subtaskId:   selectEl?.value ?? 'none',
-        startTime:   Date.now(),
-        accumulated: task.timeSpent ?? 0,
-        intervalId:  setInterval(() => _tick(taskId), 1000)
+        subtaskId:    selectEl?.value ?? 'none',
+        startTime:    Date.now(),
+        accumulated:  task.timeSpent ?? 0,
+        nextNotifyAt: NOTIFY_THRESHOLD[type],
+        intervalId:   setInterval(() => _tick(taskId, type), 1000)
     };
 
     renderBoard();
 }
 
 export function pauseTimer(taskId) {
-    if (!STATE.activeTimer || STATE.activeTimer.taskId !== taskId) return;
+    const task = STATE.tasks.find(t => t.id === taskId);
+    if (!task) return;
 
-    clearInterval(STATE.activeTimer.intervalId);
-    const elapsed = _elapsed();
+    const type = task.type;
+    if (!STATE.timers[type] || STATE.timers[type].taskId !== taskId) return;
+
+    clearInterval(STATE.timers[type].intervalId);
+    const elapsed = _elapsed(type);
     _openPauseFeedbackModal(taskId, elapsed);
 }
 
 export async function stopTimer(taskId) {
-    if (!STATE.activeTimer || STATE.activeTimer.taskId !== taskId) return;
+    const task = STATE.tasks.find(t => t.id === taskId);
+    if (!task) return;
 
-    clearInterval(STATE.activeTimer.intervalId);
-    const elapsed   = _elapsed();
-    const subtaskId = STATE.activeTimer.subtaskId;
-    STATE.activeTimer = null;
+    const type = task.type;
+    if (!STATE.timers[type] || STATE.timers[type].taskId !== taskId) return;
+
+    clearInterval(STATE.timers[type].intervalId);
+    const elapsed   = _elapsed(type);
+    const subtaskId = STATE.timers[type].subtaskId;
+    STATE.timers[type] = null;
 
     await saveTime(taskId, elapsed, subtaskId, { progress: 100 });
     await completeTask(taskId);
@@ -52,12 +66,14 @@ export async function stopTimer(taskId) {
 export function cancelPause(taskId) {
     const task = STATE.tasks.find(t => t.id === taskId);
     if (task) {
-        STATE.activeTimer = {
+        const type = task.type;
+        STATE.timers[type] = {
             taskId,
-            subtaskId:   null,
-            startTime:   Date.now(),
-            accumulated: task.timeSpent ?? 0,
-            intervalId:  setInterval(() => _tick(taskId), 1000)
+            subtaskId:    null,
+            startTime:    Date.now(),
+            accumulated:  task.timeSpent ?? 0,
+            nextNotifyAt: NOTIFY_THRESHOLD[type],
+            intervalId:   setInterval(() => _tick(taskId, type), 1000)
         };
     }
     closeModal('modalTaskDetail');
@@ -65,29 +81,110 @@ export function cancelPause(taskId) {
 }
 
 export async function confirmPause(taskId, elapsedTime) {
+    const task = STATE.tasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    const type = task.type;
     const progress    = parseInt(document.getElementById('pauseProgress').value, 10);
     const observation = document.getElementById('pauseObservation').value.trim();
-    const subtaskId   = STATE.activeTimer?.subtaskId ?? null;
+    const subtaskId   = STATE.timers[type]?.subtaskId ?? null;
 
     await saveTime(taskId, elapsedTime, subtaskId, {
         progress,
         observation: observation || null
     });
 
-    STATE.activeTimer = null;
+    STATE.timers[type] = null;
     closeModal('modalTaskDetail');
     renderBoard();
 }
 
-function _elapsed() {
-    return Math.floor((Date.now() - STATE.activeTimer.startTime) / 1000);
+// ---------------------------------------------------------------------------
+// Notificación de inactividad
+// ---------------------------------------------------------------------------
+
+export function closeTimerNotif() {
+    document.getElementById('modalTimerNotif').classList.remove('active');
 }
 
-function _tick(taskId) {
-    const el = document.getElementById(`timer-${taskId}`);
-    if (el && STATE.activeTimer) {
-        el.textContent = formatTime(STATE.activeTimer.accumulated + _elapsed());
+export function timerNotifNo(taskId, type) {
+    const task = STATE.tasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    closeTimerNotif();
+
+    const label = type === 'activity' ? 'actividad' : 'tarea';
+    document.getElementById('timerActionBody').innerHTML = `
+        <p style="text-align:center; margin:0.5rem 0; font-size:1rem;">
+            ¿Deseas finalizar o detener la ${label}
+            <strong>"${task.title}"</strong>?
+        </p>`;
+    document.getElementById('timerActionFooter').innerHTML = `
+        <button class="btn btn-secondary" onclick="timerActionStop('${taskId}', '${type}')">
+            <i class="fas fa-stop"></i> Detener
+        </button>
+        <button class="btn btn-primary" onclick="timerActionFinalize('${taskId}', '${type}')">
+            <i class="fas fa-check-double"></i> Finalizar
+        </button>`;
+
+    document.getElementById('modalTimerAction').classList.add('active');
+}
+
+export function closeTimerAction() {
+    document.getElementById('modalTimerAction').classList.remove('active');
+}
+
+export async function timerActionFinalize(taskId, type) {
+    closeTimerAction();
+    await stopTimer(taskId);
+}
+
+export function timerActionStop(taskId, type) {
+    closeTimerAction();
+    pauseTimer(taskId);
+}
+
+// ---------------------------------------------------------------------------
+// Privadas
+// ---------------------------------------------------------------------------
+
+function _elapsed(type) {
+    return Math.floor((Date.now() - STATE.timers[type].startTime) / 1000);
+}
+
+function _tick(taskId, type) {
+    const el    = document.getElementById(`timer-${taskId}`);
+    const timer = STATE.timers[type];
+    if (!el || !timer) return;
+
+    const elapsed = _elapsed(type);
+    el.textContent = formatTime(timer.accumulated + elapsed);
+
+    // Mostrar notificación cada vez que se alcanza el próximo umbral
+    if (elapsed >= timer.nextNotifyAt) {
+        timer.nextNotifyAt += NOTIFY_THRESHOLD[type];
+        _showTimerNotification(taskId, type);
     }
+}
+
+function _showTimerNotification(taskId, type) {
+    const task = STATE.tasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    const label    = type === 'activity' ? 'actividad' : 'tarea';
+    const timeStr  = type === 'activity' ? '1 hora' : '3 horas';
+
+    document.getElementById('timerNotifBody').innerHTML = `
+        <p style="text-align:center; margin:0.5rem 0; font-size:1rem;">
+            Han pasado <strong>${timeStr}</strong> desde que iniciaste la ${label}
+            <strong>"${task.title}"</strong>.<br>
+            ¿Sigues trabajando en ella?
+        </p>`;
+    document.getElementById('timerNotifFooter').innerHTML = `
+        <button class="btn btn-secondary" onclick="timerNotifNo('${taskId}', '${type}')">No</button>
+        <button class="btn btn-primary"   onclick="closeTimerNotif()">Sí</button>`;
+
+    document.getElementById('modalTimerNotif').classList.add('active');
 }
 
 function _openPauseFeedbackModal(taskId, elapsedTime) {

@@ -2,7 +2,7 @@
 
 import { STATE }      from './state.js';
 import { updateKPIs } from './kpi.js';
-import { formatTime, formatDate, isOverdue, getActivityTypeLabel } from './utils.js';
+import { formatTime, formatDate, isOverdue, getActivityTypeLabel, formatTimeCompact, formatLogDate } from './utils.js';
 
 export function renderBoard() {
     const columns = {
@@ -39,7 +39,9 @@ export function renderBoard() {
 }
 
 export function createTaskCard(task) {
-    const isActiveTimer = STATE.activeTimer?.taskId === task.id;
+    const type          = task.type;
+    const isActiveTimer = STATE.timers[type]?.taskId === task.id;
+    const timer         = STATE.timers[type];
 
     const card = document.createElement('div');
     card.className = `task-card${isActiveTimer ? ' active-timer' : ''}`;
@@ -55,6 +57,7 @@ export function createTaskCard(task) {
     const completeClass = isComplete ? 'complete' : '';
 
     const showTimer = task.column === 'working-now' || task.column === 'activities';
+    const showSubtaskSelector = showTimer && task.type !== 'activity';
 
     const subtaskOptions = [
         '<option value="none">-- No specific subtask --</option>',
@@ -64,16 +67,24 @@ export function createTaskCard(task) {
     ].join('');
 
     const timerSeconds = isActiveTimer
-        ? STATE.activeTimer.accumulated + Math.floor((Date.now() - STATE.activeTimer.startTime) / 1000)
+        ? timer.accumulated + Math.floor((Date.now() - timer.startTime) / 1000)
         : task.timeSpent;
 
     card.innerHTML = `
         <div class="task-priority ${task.priority}"></div>
         <div class="task-header">
             <span class="task-title">${task.title}</span>
-            <button class="task-menu-btn" onclick="openTaskDetail('${task.id}')" title="View detail">
-                <i class="fas fa-expand"></i>
-            </button>
+            <div style="display:flex;gap:0.25rem;align-items:center;">
+                <button class="task-menu-btn" onclick="openEditTaskModal('${task.id}')" title="Edit task">
+                    <i class="fas fa-pencil-alt"></i>
+                </button>
+                <button class="task-menu-btn" onclick="confirmDeleteTask('${task.id}')" title="Delete task">
+                    <i class="fas fa-trash"></i>
+                </button>
+                <button class="task-menu-btn" onclick="openTaskDetail('${task.id}')" title="View detail">
+                    <i class="fas fa-expand"></i>
+                </button>
+            </div>
         </div>
         <div class="task-meta">
             ${task.deadline ? `
@@ -100,12 +111,13 @@ export function createTaskCard(task) {
                 </div>
             </div>` : ''}
         ${showTimer ? `
+            ${showSubtaskSelector ? `
             <div class="subtask-selector">
                 <label>Working on:</label>
                 <select id="subtask-select-${task.id}" ${isActiveTimer ? 'disabled' : ''}>
                     ${subtaskOptions}
                 </select>
-            </div>
+            </div>` : ''}
             <div class="task-timer">
                 <span class="timer-display ${isActiveTimer ? 'running' : ''}" id="timer-${task.id}">
                     ${formatTime(timerSeconds)}
@@ -128,6 +140,17 @@ export function createTaskCard(task) {
                 <span class="task-tag">
                     <i class="fas fa-tag"></i> ${getActivityTypeLabel(task.activityType)}
                 </span>
+            </div>` : ''}
+        ${task.timeLog && task.timeLog.length > 0 ? `
+            <div class="time-log">
+                ${[...task.timeLog]
+                    .sort((a, b) => b.date.localeCompare(a.date))
+                    .slice(0, 5)
+                    .map(entry => `
+                        <div class="time-log-entry">
+                            <span class="time-log-date">${formatLogDate(entry.date)}</span>
+                            <span class="time-log-duration">${formatTimeCompact(entry.seconds)}</span>
+                        </div>`).join('')}
             </div>` : ''}
     `;
 

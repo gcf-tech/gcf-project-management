@@ -2,7 +2,8 @@
 
 export const STATE = {
     tasks: [],
-    activeTimer: null,
+    timers: { project: null, activity: null },
     currentTaskType: 'project',
+    editingTaskId: null,
     selectedDeckCards: new Set()
 };

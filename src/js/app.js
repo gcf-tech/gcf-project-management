@@ -10,6 +10,7 @@ import { CONFIG }          from './config.js';
 
 import {
     openNewTaskModal,
+    openEditTaskModal,
     openImportDeckModal,
     openTaskDetail,
     closeModal,
@@ -19,6 +20,10 @@ import {
     toggleDeckSelection,
     importSelectedDeckCards,
     selectDeckBoard,
+    confirmDeleteTask,
+    openTimeEdit,
+    cancelTimeEdit,
+    saveTimeEdit,
 } from './modals.js';
 
 import {
@@ -27,10 +32,16 @@ import {
     stopTimer,
     cancelPause,
     confirmPause,
+    closeTimerNotif,
+    timerNotifNo,
+    closeTimerAction,
+    timerActionFinalize,
+    timerActionStop,
 } from './timer.js';
 
 Object.assign(window, {
     openNewTaskModal,
+    openEditTaskModal,
     openImportDeckModal,
     openTaskDetail,
     closeModal,
@@ -40,11 +51,20 @@ Object.assign(window, {
     toggleDeckSelection,
     importSelectedDeckCards,
     selectDeckBoard,
+    confirmDeleteTask,
+    openTimeEdit,
+    cancelTimeEdit,
+    saveTimeEdit,
     startTimer,
     pauseTimer,
     stopTimer,
     cancelPause,
     confirmPause,
+    closeTimerNotif,
+    timerNotifNo,
+    closeTimerAction,
+    timerActionFinalize,
+    timerActionStop,
 });
 
 async function init() {

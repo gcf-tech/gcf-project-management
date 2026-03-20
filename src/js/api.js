@@ -58,6 +58,16 @@ export async function saveTime(taskId, timeSpent, subtaskId = null, feedback = n
 
     task.timeSpent += timeSpent;
 
+    // Acumular en el log diario
+    if (!task.timeLog) task.timeLog = [];
+    const today = new Date().toISOString().split('T')[0];
+    const logEntry = task.timeLog.find(e => e.date === today);
+    if (logEntry) {
+        logEntry.seconds += timeSpent;
+    } else {
+        task.timeLog.push({ date: today, seconds: timeSpent });
+    }
+
     if (subtaskId && subtaskId !== 'none') {
         const sub = task.subtasks.find(s => s.id === subtaskId);
         if (sub) sub.timeSpent += timeSpent;
@@ -73,11 +83,43 @@ export async function saveTime(taskId, timeSpent, subtaskId = null, feedback = n
     save();
 }
 
+export async function setTaskTime(taskId, newSeconds) {
+    const task = STATE.tasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    const diff = newSeconds - task.timeSpent;
+    task.timeSpent = newSeconds;
+
+    // Ajustar la entrada de hoy en el log
+    if (!task.timeLog) task.timeLog = [];
+    const today = new Date().toISOString().split('T')[0];
+    const logEntry = task.timeLog.find(e => e.date === today);
+    if (logEntry) {
+        logEntry.seconds = Math.max(0, logEntry.seconds + diff);
+        if (logEntry.seconds === 0) {
+            task.timeLog = task.timeLog.filter(e => e.date !== today);
+        }
+    } else if (diff > 0) {
+        task.timeLog.push({ date: today, seconds: diff });
+    }
+
+    if (CONFIG.BACKEND_URL) {
+        await apiFetch(`/tareas/${taskId}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ timeSpent: newSeconds, timeLog: task.timeLog }),
+        });
+    }
+
+    save();
+    return task;
+}
+
 export async function createTask(data) {
     const newTask = {
         id:           generateId('task'),
         progress:     0,
         timeSpent:    0,
+        timeLog:      [],
         observations: [],
         subtasks:     [],
         ...data,
@@ -113,6 +155,40 @@ export async function createTask(data) {
     STATE.tasks.push(newTask);
     save();
     return newTask;
+}
+
+export async function updateTask(taskId, data) {
+    if (CONFIG.BACKEND_URL) {
+        const saved = await apiFetch(`/tareas/${taskId}`, {
+            method: 'PATCH',
+            body: JSON.stringify(data),
+        });
+
+        const idx = STATE.tasks.findIndex(t => t.id === taskId);
+        if (idx !== -1) {
+            const updated = saved?.task ?? (saved?.id ? saved : { ...STATE.tasks[idx], ...data });
+            STATE.tasks[idx] = updated;
+        }
+        save();
+        return saved;
+    }
+
+    const idx = STATE.tasks.findIndex(t => t.id === taskId);
+    if (idx !== -1) {
+        STATE.tasks[idx] = { ...STATE.tasks[idx], ...data };
+    }
+    save();
+    return STATE.tasks[idx];
+}
+
+export async function deleteTask(taskId) {
+    if (CONFIG.BACKEND_URL) {
+        await apiFetch(`/tareas/${taskId}`, { method: 'DELETE' });
+    }
+
+    const idx = STATE.tasks.findIndex(t => t.id === taskId);
+    if (idx !== -1) STATE.tasks.splice(idx, 1);
+    save();
 }
 
 export async function updateColumn(taskId, column) {

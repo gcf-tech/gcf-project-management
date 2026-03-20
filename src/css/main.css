@@ -536,6 +536,33 @@ body {
     color: var(--color-primary);
 }
 
+.time-log {
+    margin-top: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    border-top: 1px solid var(--color-border);
+    padding-top: 0.4rem;
+}
+
+.time-log-entry {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+    padding: 0.1rem 0;
+}
+
+.time-log-date {
+    font-weight: 500;
+}
+
+.time-log-duration {
+    font-weight: 600;
+    color: var(--color-primary);
+}
+
 .modal-overlay {
     position: fixed;
     inset: 0;

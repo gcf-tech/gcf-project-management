@@ -209,6 +209,34 @@
       </div>
     </div>
 
+    <!-- Modal: notificación de timer activo -->
+    <div class="modal-overlay" id="modalTimerNotif">
+      <div class="modal" style="max-width:420px;">
+        <div class="modal-header">
+          <h2 class="modal-title">¿Sigues trabajando?</h2>
+          <button class="modal-close" onclick="closeTimerNotif()" aria-label="Close">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div class="modal-body" id="timerNotifBody"></div>
+        <div class="modal-footer" id="timerNotifFooter"></div>
+      </div>
+    </div>
+
+    <!-- Modal: acción tras respuesta "No" -->
+    <div class="modal-overlay" id="modalTimerAction">
+      <div class="modal" style="max-width:420px;">
+        <div class="modal-header">
+          <h2 class="modal-title">Detener o finalizar</h2>
+          <button class="modal-close" onclick="closeTimerAction()" aria-label="Close">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div class="modal-body" id="timerActionBody"></div>
+        <div class="modal-footer" id="timerActionFooter"></div>
+      </div>
+    </div>
+
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

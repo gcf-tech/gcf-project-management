@@ -30,6 +30,24 @@ export function generateId(prefix = 'item') {
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+export function formatTimeCompact(seconds) {
+    const s = Math.max(0, Math.floor(seconds));
+    const hrs  = Math.floor(s / 3600);
+    const mins = Math.floor((s % 3600) / 60);
+    if (hrs === 0) return `${mins}m`;
+    if (mins === 0) return `${hrs}h`;
+    return `${hrs}h ${mins}m`;
+}
+
+export function formatLogDate(dateStr) {
+    const days = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+    const d    = new Date(`${dateStr}T00:00:00`);
+    const day  = days[d.getDay()];
+    const dd   = String(d.getDate()).padStart(2, '0');
+    const mm   = String(d.getMonth() + 1).padStart(2, '0');
+    return `${day} ${dd}/${mm}`;
+}
+
 export function getActivityTypeLabel(type) {
     const labels = {
         meeting:  'Meeting',
