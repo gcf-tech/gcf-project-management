@@ -63,11 +63,12 @@ export function createTaskCard(task) {
     const activeSubtask = activeSubtaskId && activeSubtaskId !== 'none'
         ? task.subtasks.find(s => s.id === activeSubtaskId)
         : null;
+    const savedSubId = STATE.selectedSubtasks[task.id];
     const subtaskOptions = [
-        `<option value="none">-- No specific subtask --</option>`,
+        `<option value="none"${!savedSubId || savedSubId === 'none' ? ' selected' : ''}>-- No specific subtask --</option>`,
         ...task.subtasks
             .filter(s => !s.completed)
-            .map(s => `<option value="${s.id}">${s.text}</option>`)
+            .map(s => `<option value="${s.id}"${savedSubId === s.id ? ' selected' : ''}>${s.text}</option>`)
     ].join('');
 
     const timerSeconds = isActiveTimer
