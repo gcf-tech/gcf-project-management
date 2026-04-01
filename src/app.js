@@ -8,6 +8,11 @@ import { setupDragAndDrop } from './board/dragDrop.js';
 import { initAuth }         from './auth/auth.js';
 import { CONFIG }           from './core/config.js';
 import { closeModal }       from './shared/modal.js';
+import { fetchTeams }       from './dashboard/dashApi.js';
+import { renderMyMetrics }  from './dashboard/myMetrics.js';
+import { renderTeamDashboard } from './dashboard/teamDashboard.js';
+import { renderSkills, submitEndorse } from './skills/skills.js';
+import { renderAdmin }      from './admin/admin.js';
 
 import {
     openNewTaskModal, openEditTaskModal,
@@ -31,6 +36,53 @@ import {
     closeTimerNotif, timerNotifNo, closeTimerAction, timerActionFinalize, timerActionStop,
     cancelCompletion,
 } from './timer/timer.js';
+
+// ---------------------------------------------------------------------------
+// Navegación entre vistas
+// ---------------------------------------------------------------------------
+
+let _currentUser = null;
+
+function navigateTo(view) {
+    document.querySelectorAll('.app-view').forEach(v => v.classList.remove('active'));
+    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+
+    document.getElementById(`view-${view}`)?.classList.add('active');
+    document.querySelector(`.nav-tab[data-view="${view}"]`)?.classList.add('active');
+
+    // Lazy render cada vez (datos frescos)
+    const container = document.getElementById(`view-${view}`);
+    if (!container) return;
+
+    switch (view) {
+        case 'my-metrics':
+            renderMyMetrics(container, _currentUser);
+            break;
+        case 'dashboard':
+            renderTeamDashboard(container);
+            break;
+        case 'skills':
+            if (_currentUser) renderSkills(container, _currentUser);
+            break;
+        case 'admin':
+            if (_currentUser) renderAdmin(container, _currentUser);
+            break;
+    }
+}
+
+function setupNav(user, isTechTeam) {
+    // Mostrar tabs según rol
+    if (user.role === 'leader' || user.role === 'admin') {
+        document.querySelectorAll('.nav-leader').forEach(el => el.style.display = '');
+    }
+    if (isTechTeam) {
+        document.querySelectorAll('.nav-tech').forEach(el => el.style.display = '');
+    }
+
+    document.querySelectorAll('.nav-tab').forEach(tab => {
+        tab.addEventListener('click', () => navigateTo(tab.dataset.view));
+    });
+}
 
 // ---------------------------------------------------------------------------
 // Funciones locales
@@ -101,6 +153,9 @@ async function handleClick(e) {
         case 'toggle-deck':       toggleDeckSelection(deckId); break;
         case 'import-deck-cards': await importSelectedDeckCards(); break;
 
+        // Skills – endorse
+        case 'submit-endorse':    await submitEndorse(); break;
+
         // Modales
         case 'close-modal':       closeModal(modalId); break;
     }
@@ -132,21 +187,38 @@ async function init() {
     } else {
         document.getElementById('userAvatar').textContent = user.initials   || '?';
         document.getElementById('userName').textContent   = user.displayname || user.id || 'User';
+        _currentUser = user;
     }
 
     load();
 
+    // Cargar tareas y team info en paralelo
+    let isTechTeam = false;
+    const promises = [];
+
     if (CONFIG.BACKEND_URL) {
-        try {
-            const fetched = await fetchTasks();
-            if (Array.isArray(fetched) && fetched.length > 0) STATE.tasks = fetched;
-        } catch (err) {
-            console.error('[init] Error al cargar tareas:', err);
-        }
+        promises.push(
+            fetchTasks().then(fetched => {
+                if (Array.isArray(fetched) && fetched.length > 0) STATE.tasks = fetched;
+            }).catch(err => console.error('[init] Error al cargar tareas:', err))
+        );
     }
+
+    if (_currentUser?.teamId != null) {
+        promises.push(
+            fetchTeams().then(teams => {
+                const myTeam = (teams ?? []).find(t => t.id === _currentUser.teamId);
+                isTechTeam = myTeam?.isTechTeam ?? false;
+            }).catch(() => {}) // no crítico
+        );
+    }
+
+    await Promise.all(promises);
 
     renderBoard();
     setupDragAndDrop();
+
+    if (_currentUser) setupNav(_currentUser, isTechTeam);
 
     document.addEventListener('click',  handleClick);
     document.addEventListener('change', handleChange);
