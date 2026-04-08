@@ -8,12 +8,12 @@ import TeamDashboardView from './components/TeamDashboardView.jsx';
 
 const roots = new WeakMap();
 
-export function renderTeamDashboard(container) {
+export function renderTeamDashboard(container, user) {
     let root = roots.get(container);
     if (!root) {
         container.innerHTML = '';
         root = createRoot(container);
         roots.set(container, root);
     }
-    root.render(createElement(TeamDashboardView));
+    root.render(createElement(TeamDashboardView, { user }));
 }

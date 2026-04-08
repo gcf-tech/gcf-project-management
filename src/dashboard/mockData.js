@@ -23,12 +23,12 @@ export const MOCK_MEMBERS = [
 ];
 
 export const MOCK_METRICS = {
-    u1: { completedTasks: 45, onTimeRate: 95, performance: 12, hoursWorked: 160, effectivenessIndex: 8.5, avgDifficulty: 3.2 },
-    u2: { completedTasks: 38, onTimeRate: 78, performance: 10, hoursWorked: 150, effectivenessIndex: 7.8, avgDifficulty: 4.1 },
-    u3: { completedTasks: 52, onTimeRate: 98, performance: 14, hoursWorked: 155, effectivenessIndex: 9.1, avgDifficulty: 2.5 },
-    u4: { completedTasks: 30, onTimeRate: 72, performance: 8,  hoursWorked: 140, effectivenessIndex: 6.5, avgDifficulty: 2.8 },
-    u5: { completedTasks: 60, onTimeRate: 92, performance: 15, hoursWorked: 165, effectivenessIndex: 8.8, avgDifficulty: 2.1 },
-    u6: { completedTasks: 42, onTimeRate: 88, performance: 11, hoursWorked: 148, effectivenessIndex: 8.0, avgDifficulty: 3.8 },
+    u1: { completedTasks: 45, onTimeRate: 95, performance: 12, hoursWorked: 160, effectivenessIndex: 8.5, avgDifficulty: 3.2, earlyDeliveryRate: 75 },
+    u2: { completedTasks: 38, onTimeRate: 78, performance: 10, hoursWorked: 150, effectivenessIndex: 7.8, avgDifficulty: 4.1, earlyDeliveryRate: 40 },
+    u3: { completedTasks: 52, onTimeRate: 98, performance: 14, hoursWorked: 155, effectivenessIndex: 9.1, avgDifficulty: 2.5, earlyDeliveryRate: 85 },
+    u4: { completedTasks: 30, onTimeRate: 72, performance: 8,  hoursWorked: 140, effectivenessIndex: 6.5, avgDifficulty: 2.8, earlyDeliveryRate: 30 },
+    u5: { completedTasks: 60, onTimeRate: 92, performance: 15, hoursWorked: 165, effectivenessIndex: 8.8, avgDifficulty: 2.1, earlyDeliveryRate: 70 },
+    u6: { completedTasks: 42, onTimeRate: 88, performance: 11, hoursWorked: 148, effectivenessIndex: 8.0, avgDifficulty: 3.8, earlyDeliveryRate: 60 },
 };
 
 export const MOCK_TREND_DATA = [
@@ -39,6 +39,27 @@ export const MOCK_TREND_DATA = [
     { month: 'May', Tech: 62, Marketing: 50, Ventas: 58 },
     { month: 'Jun', Tech: 58, Marketing: 48, Ventas: 65 },
 ];
+
+// Days before (+) or after (-) deadline per team per month (0 = exactly on time)
+export const MOCK_TREND_DEADLINE = [
+    { month: 'Ene', Tech:  2, Marketing: -1, Ventas:  3 },
+    { month: 'Feb', Tech:  1, Marketing:  0, Ventas:  2 },
+    { month: 'Mar', Tech: -1, Marketing: -3, Ventas:  1 },
+    { month: 'Abr', Tech:  3, Marketing:  1, Ventas: -2 },
+    { month: 'May', Tech:  2, Marketing:  2, Ventas:  4 },
+    { month: 'Jun', Tech: -1, Marketing: -2, Ventas:  3 },
+];
+
+// Days before (+) or after (-) deadline per member per month
+export const MOCK_TREND_MEMBER_DEADLINE = {
+    months: ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun'],
+    u1: [ 2,  3,  1,  4,  2,  5],
+    u2: [-1,  0, -2,  1,  0, -3],
+    u3: [ 3,  4,  5,  3,  6,  4],
+    u4: [-2, -1, -3,  0, -2, -4],
+    u5: [ 1,  2,  3,  2,  4,  3],
+    u6: [ 0,  1, -1,  2,  1,  0],
+};
 
 export const MOCK_STATUS_DATA = {
     Completadas:  120,

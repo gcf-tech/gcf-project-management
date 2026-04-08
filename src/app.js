@@ -60,7 +60,7 @@ function navigateTo(view) {
             renderMyMetrics(container, _currentUser);
             break;
         case 'dashboard':
-            renderTeamDashboard(container);
+            renderTeamDashboard(container, _currentUser);
             break;
         case 'skills':
             if (_currentUser) renderSkills(container, _currentUser);

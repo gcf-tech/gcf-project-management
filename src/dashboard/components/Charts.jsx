@@ -31,6 +31,58 @@ export function LineChart({ labels, datasets }) {
     return <div className="chart-container"><canvas ref={ref} /></div>;
 }
 
+/**
+ * Area chart with a dashed reference line at y=0 (the deadline).
+ * Values above 0 = early delivery; values below 0 = late delivery.
+ */
+export function AreaChart({ labels, datasets, referenceLabel = 'Deadline' }) {
+    const ref = useChart(() => ({
+        type: 'line',
+        data: {
+            labels,
+            datasets: [
+                {
+                    label: referenceLabel,
+                    data: new Array(labels.length).fill(0),
+                    borderColor: '#94a3b8',
+                    borderWidth: 2,
+                    borderDash: [6, 4],
+                    fill: false,
+                    pointRadius: 0,
+                    tension: 0,
+                    order: 0,
+                },
+                ...datasets.map((d, i) => ({
+                    label: d.label,
+                    data: d.data,
+                    borderColor: PALETTE[i % PALETTE.length],
+                    backgroundColor: PALETTE[i % PALETTE.length] + '33',
+                    tension: 0.35,
+                    fill: 'origin',
+                    pointRadius: 4,
+                    order: i + 1,
+                })),
+            ],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: 'top' } },
+            scales: {
+                y: {
+                    title: { display: true, text: 'Días respecto al deadline' },
+                    grid: {
+                        color: ctx => ctx.tick.value === 0 ? '#94a3b8' : '#e2e8f020',
+                        lineWidth: ctx => ctx.tick.value === 0 ? 2 : 1,
+                    },
+                },
+            },
+        },
+    }), [labels, datasets, referenceLabel]);
+
+    return <div className="chart-container"><canvas ref={ref} /></div>;
+}
+
 export function BarChart({ labels, datasets }) {
     const ref = useChart(() => ({
         type: 'bar',
