@@ -12,7 +12,8 @@ node_modules/
 .clone/
 dist
 dist-ssr
-*.local
+main.py
+
 
 # Editor directories and files
 .vscode/*

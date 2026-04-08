@@ -50,6 +50,18 @@ export const endorseSkill = (userId, skillId, score, comment) =>
         body: JSON.stringify({ score, comment }),
     });
 
+export const evaluateUser = (userId, skills) =>
+    apiFetch(`/api/users/${userId}/skills/evaluate`, {
+        method: 'POST',
+        body: JSON.stringify(skills),
+    });
+
+export const createSkill = (name, category) =>
+    apiFetch('/api/skills', {
+        method: 'POST',
+        body: JSON.stringify({ name, category }),
+    });
+
 // --- Admin ---
 export const fetchAdminUsers = () =>
     apiFetch('/api/admin/users');
@@ -69,8 +81,8 @@ export const updateTeam = (teamId, data) =>
 export const deleteTeam = (teamId) =>
     apiFetch(`/api/admin/teams/${teamId}`, { method: 'DELETE' });
 
-export const addTeamMember = (teamId, userId) =>
-    apiFetch(`/api/admin/teams/${teamId}/add-member?user_id=${encodeURIComponent(userId)}`, { method: 'POST' });
+export const addTeamMember = (teamId, ncUserId) =>
+    apiFetch(`/api/admin/teams/${teamId}/add-member?nc_user_id=${encodeURIComponent(ncUserId)}`, { method: 'POST' });
 
 export const removeTeamMember = (teamId, userId) =>
     apiFetch(`/api/admin/teams/${teamId}/remove-member?user_id=${encodeURIComponent(userId)}`, { method: 'POST' });

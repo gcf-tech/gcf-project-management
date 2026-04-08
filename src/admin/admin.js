@@ -1,12 +1,32 @@
 /** Vista: Panel de administración – leaders y admins. */
 
 import {
-    fetchMyTeam, fetchAdminUsers, updateAdminUser,
+    fetchAdminUsers,
     fetchTeams, createTeam, updateTeam, deleteTeam,
     addTeamMember, removeTeamMember, setUserRole,
 } from '../dashboard/dashApi.js';
+import { USE_MOCK, MOCK_MEMBERS, MOCK_TEAMS } from '../dashboard/mockData.js';
 
-let _user = null;
+// Shapes mock members/teams to match what the backend returns
+const _mockAdminUsers = () => MOCK_MEMBERS.map(m => ({
+    id:          m.userId,
+    ncUserId:    m.userId,
+    displayName: m.displayname,
+    displayname: m.displayname,
+    jobTitle:    m.jobTitle,
+    teamId:      m.teamId,
+    role:        m.userId === 'u1' ? 'leader' : 'member',
+}));
+
+const _mockAdminTeams = () => MOCK_TEAMS.map(t => ({
+    id:          t.id,
+    name:        t.name,
+    isTechTeam:  t.id === 'tech',
+    memberCount: MOCK_MEMBERS.filter(m => m.teamId === t.id).length,
+}));
+
+let _user     = null;
+let _allTeams = [];
 
 export async function renderAdmin(container, user) {
     _user = user;
@@ -15,8 +35,7 @@ export async function renderAdmin(container, user) {
     const tabs = [
         { id: 'my-team', label: '<i class="fas fa-users"></i> Mi Equipo' },
         ...(isAdmin ? [
-            { id: 'teams',    label: '<i class="fas fa-sitemap"></i> Equipos' },
-            { id: 'users',    label: '<i class="fas fa-user-cog"></i> Usuarios' },
+            { id: 'teams', label: '<i class="fas fa-sitemap"></i> Equipos' },
         ] : []),
     ];
 
@@ -37,146 +56,300 @@ export async function renderAdmin(container, user) {
         tab.addEventListener('click', () => {
             container.querySelectorAll('.skills-tab').forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
-            _loadTab(container, tab.dataset.tab, isAdmin);
+            _loadTab(container, tab.dataset.tab);
         });
     });
 
-    await _loadTab(container, 'my-team', isAdmin);
+    await _loadTab(container, 'my-team');
 }
 
-async function _loadTab(container, tab, isAdmin) {
+async function _loadTab(container, tab) {
     switch (tab) {
         case 'my-team': return _loadMyTeam(container);
         case 'teams':   return _loadTeams(container);
-        case 'users':   return _loadUsers(container, isAdmin);
     }
 }
 
 // ─── My Team ────────────────────────────────────────────────────────────────
 
 async function _loadMyTeam(container) {
-    const content = container.querySelector('#adminContent');
+    const content     = container.querySelector('#adminContent');
     content.innerHTML = '<div class="loading-state"><i class="fas fa-spinner fa-spin"></i> Cargando…</div>';
-    try {
-        const [team, allUsers] = await Promise.all([
-            fetchMyTeam(),
-            fetchAdminUsers().catch(() => []),
-        ]);
 
-        if (!team) {
-            content.innerHTML = '<div class="empty-state">No estás asignado a ningún equipo.</div>';
-            return;
+    const isAdmin    = _user?.role === 'admin';
+    const viewerRole = _user?.role ?? 'member';
+    const viewerNcId = _user?.id;
+
+    try {
+        const [allUsers, allTeams] = USE_MOCK
+            ? [_mockAdminUsers(), _mockAdminTeams()]
+            : await Promise.all([fetchAdminUsers().catch(() => []), fetchTeams().catch(() => [])]);
+
+        _allTeams = allTeams ?? [];
+
+        let html = '';
+
+        if (isAdmin) {
+            if (!_allTeams.length) {
+                content.innerHTML = '<div class="empty-state">No hay equipos registrados.</div>';
+                return;
+            }
+            html = _allTeams.map(t => {
+                const members    = (allUsers ?? []).filter(u => u.teamId === t.id);
+                const nonMembers = (allUsers ?? []).filter(u => u.teamId !== t.id);
+                return _renderTeamCard(t.id, t.name, members, nonMembers, viewerRole, viewerNcId);
+            }).join('');
+        } else {
+            const myTeamId   = _user?.teamId;
+            const myTeam     = _allTeams.find(t => t.id === myTeamId);
+            const teamName   = myTeam?.name ?? '—';
+            const members    = (allUsers ?? []).filter(u => u.teamId === myTeamId);
+            const nonMembers = (allUsers ?? []).filter(u =>
+                u.teamId !== myTeamId && u.ncUserId !== viewerNcId
+            );
+
+            if (!myTeamId) {
+                content.innerHTML = '<div class="empty-state">No estás asignado a ningún equipo.</div>';
+                return;
+            }
+            html = _renderTeamCard(myTeamId, teamName, members, nonMembers, viewerRole, viewerNcId);
         }
 
-        const members = team.members ?? [];
-        const nonMembers = (allUsers ?? []).filter(u => !members.find(m => (m.id ?? m.userId) === (u.id ?? u.userId)));
+        content.innerHTML = html;
 
-        content.innerHTML = `
-            <div class="section-card">
-                <div class="section-title-row">
-                    <h3 class="section-title"><i class="fas fa-users"></i> ${_esc(team.name)}</h3>
-                    <button class="btn btn-primary btn-sm" id="btnShowAddMember">
-                        <i class="fas fa-user-plus"></i> Añadir miembro
-                    </button>
-                </div>
+        if (isAdmin) {
+            _allTeams.forEach(t => _bindTeamEvents(content, t.id, container, allUsers ?? []));
+        } else {
+            _bindTeamEvents(content, _user?.teamId, container, allUsers ?? []);
+        }
 
-                ${nonMembers.length ? `
-                <div id="addMemberRow" class="add-member-row" style="display:none">
-                    <select class="form-select form-select-sm" id="selectAddUser">
-                        <option value="">— Selecciona usuario —</option>
-                        ${nonMembers.map(u => `<option value="${_esc(u.id ?? u.userId)}">${_esc(u.displayname || u.id)}</option>`).join('')}
-                    </select>
-                    <button class="btn btn-success btn-sm" id="btnConfirmAdd">Añadir</button>
-                    <button class="btn btn-secondary btn-sm" id="btnCancelAdd">Cancelar</button>
-                </div>` : ''}
-
-                <div class="table-wrapper">
-                    <table class="data-table" id="teamMembersTable">
-                        <thead><tr>
-                            <th>Miembro</th>
-                            <th>Job Title</th>
-                            <th>Rol</th>
-                            <th>Acciones</th>
-                        </tr></thead>
-                        <tbody>
-                            ${members.map(m => _memberRow(m, team.id)).join('')}
-                        </tbody>
-                    </table>
-                </div>
-            </div>`;
-
-        _bindMyTeamEvents(content, team.id, container);
     } catch (err) {
         content.innerHTML = `<div class="error-state"><i class="fas fa-exclamation-circle"></i> ${_esc(err.message)}</div>`;
     }
 }
 
-function _memberRow(m, teamId) {
-    const uid  = _esc(m.id ?? m.userId ?? '');
-    const name = _esc(m.displayname || m.id || m.userId || '');
-    const job  = m.jobTitle ?? '';
-    const role = m.role ?? 'member';
+function _renderTeamCard(teamId, teamName, members, nonMembers, viewerRole, viewerNcId) {
+    const tid = teamId;
     return `
-        <tr id="row_${uid}">
+        <div class="section-card" style="margin-bottom:1.5rem">
+            <div class="section-title-row">
+                <h3 class="section-title"><i class="fas fa-users"></i> ${_esc(teamName)}</h3>
+                <button class="btn btn-primary btn-sm" id="btnShowAddMember_${tid}">
+                    <i class="fas fa-user-plus"></i> Añadir miembro
+                </button>
+            </div>
+
+            ${nonMembers.length ? `
+            <div id="addMemberRow_${tid}" class="add-member-row" style="display:none">
+                <select class="form-select form-select-sm" id="selectAddUser_${tid}">
+                    <option value="">— Selecciona usuario —</option>
+                    ${nonMembers.map(u => {
+                        const val  = _esc(u.ncUserId ?? u.id ?? '');
+                        const name = _esc(u.displayName || u.displayname || u.ncUserId || u.id || '');
+                        return `<option value="${val}">${name}</option>`;
+                    }).join('')}
+                </select>
+                <button class="btn btn-success btn-sm" id="btnConfirmAdd_${tid}">Añadir</button>
+                <button class="btn btn-secondary btn-sm" id="btnCancelAdd_${tid}">Cancelar</button>
+            </div>` : ''}
+
+            <div class="table-wrapper">
+                <table class="data-table">
+                    <thead><tr>
+                        <th>Miembro</th>
+                        <th>Rol principal</th>
+                        <th>Rol secundario</th>
+                        <th></th>
+                    </tr></thead>
+                    <tbody>
+                        ${members.length
+                            ? members.map(m => _memberRow(m, tid, viewerRole, viewerNcId)).join('')
+                            : `<tr><td colspan="4" style="text-align:center;padding:1rem;color:var(--color-muted)">Sin miembros</td></tr>`}
+                    </tbody>
+                </table>
+            </div>
+        </div>`;
+}
+
+function _memberRow(m, teamId, viewerRole, viewerNcId) {
+    const uid      = _esc(m.id ?? '');
+    const name     = _esc(m.displayName || m.displayname || m.ncUserId || '');
+    const role     = m.role ?? 'member';
+    const jobTitle = _esc(m.jobTitle ?? '—');
+    const isSelf   = m.ncUserId === viewerNcId;
+
+    const showMenu = !isSelf && (
+        viewerRole === 'admin' ||
+        (viewerRole === 'leader' && role === 'member')
+    );
+
+    const roleBadge = `<span class="role-badge role-${role}">${role}</span>`;
+
+    const menuHtml = showMenu ? `
+        <div class="action-menu-wrapper">
+            <button class="btn-dots" data-action="toggle-member-menu" data-uid="${uid}" data-team-id="${teamId}">
+                <i class="fas fa-ellipsis-v"></i>
+            </button>
+            <div class="action-dropdown" id="memberMenu_${uid}">
+                <button class="dropdown-item" data-action="move-team" data-uid="${uid}" data-team-id="${teamId}">
+                    <i class="fas fa-exchange-alt"></i> Mover de equipo
+                </button>
+                <button class="dropdown-item" data-action="change-role" data-uid="${uid}" data-team-id="${teamId}">
+                    <i class="fas fa-user-tag"></i> Cambiar de rol
+                </button>
+                <div class="dropdown-divider"></div>
+                <button class="dropdown-item dropdown-item-danger" data-action="remove-member" data-uid="${uid}" data-team-id="${teamId}">
+                    <i class="fas fa-user-minus"></i> Eliminar del equipo
+                </button>
+            </div>
+        </div>` : '';
+
+    return `
+        <tr>
             <td><div class="member-cell">
-                <div class="member-avatar">${_initials(m.displayname || m.id)}</div>
+                <div class="member-avatar">${_initials(m.displayName || m.ncUserId)}</div>
                 <span>${name}</span>
             </div></td>
-            <td>
-                <input type="text" class="form-input form-input-sm job-title-input"
-                    value="${_esc(job)}" data-uid="${uid}" data-team-id="${teamId}"
-                    placeholder="Ej. Frontend Dev">
-            </td>
-            <td><span class="role-badge role-${role}">${role}</span></td>
-            <td>
-                <button class="btn btn-danger btn-sm btn-icon" title="Remover del equipo"
-                    data-action="remove-member" data-uid="${uid}" data-team-id="${teamId}">
-                    <i class="fas fa-user-minus"></i>
-                </button>
-            </td>
+            <td>${roleBadge}</td>
+            <td><span class="text-muted text-sm">${jobTitle}</span></td>
+            <td class="actions-cell">${menuHtml}</td>
         </tr>`;
 }
 
-function _bindMyTeamEvents(content, teamId, container) {
-    // Toggle add member row
-    content.querySelector('#btnShowAddMember')?.addEventListener('click', () => {
-        const row = content.querySelector('#addMemberRow');
+function _bindTeamEvents(content, teamId, container, allUsers) {
+    const tid = teamId;
+
+    // ── Añadir miembro ────────────────────────────────────────────────────────
+    content.querySelector(`#btnShowAddMember_${tid}`)?.addEventListener('click', () => {
+        const row = content.querySelector(`#addMemberRow_${tid}`);
         if (row) row.style.display = row.style.display === 'none' ? 'flex' : 'none';
     });
-    content.querySelector('#btnCancelAdd')?.addEventListener('click', () => {
-        const row = content.querySelector('#addMemberRow');
+    content.querySelector(`#btnCancelAdd_${tid}`)?.addEventListener('click', () => {
+        const row = content.querySelector(`#addMemberRow_${tid}`);
         if (row) row.style.display = 'none';
     });
-    content.querySelector('#btnConfirmAdd')?.addEventListener('click', async () => {
-        const sel = content.querySelector('#selectAddUser');
+    content.querySelector(`#btnConfirmAdd_${tid}`)?.addEventListener('click', async () => {
+        const sel = content.querySelector(`#selectAddUser_${tid}`);
         const uid = sel?.value;
-        if (!uid) return;
+        if (!uid || !tid) return;
         try {
-            await addTeamMember(teamId, uid);
-            _loadMyTeam(container);
+            await addTeamMember(tid, uid);
+            const addedName = sel.options[sel.selectedIndex]?.text ?? uid;
+            await _loadMyTeam(container);
+            alert(`${addedName} fue agregado al equipo.`);
         } catch (err) { alert('Error: ' + err.message); }
     });
 
-    // Save job titles on blur
-    content.querySelectorAll('.job-title-input').forEach(input => {
-        input.addEventListener('change', async () => {
-            try {
-                await updateAdminUser(input.dataset.uid, { jobTitle: input.value.trim() });
-            } catch (err) { alert('Error: ' + err.message); }
+    // ── Toggle ⋮ ──────────────────────────────────────────────────────────────
+    content.querySelectorAll(`[data-action="toggle-member-menu"][data-team-id="${tid}"]`).forEach(btn => {
+        btn.addEventListener('click', e => {
+            e.stopPropagation();
+            const menu = document.getElementById(`memberMenu_${btn.dataset.uid}`);
+            const isOpen = menu?.classList.contains('open');
+            _closeAllDropdowns(content);
+            if (!isOpen && menu) menu.classList.add('open');
         });
     });
 
-    // Remove member
-    content.querySelectorAll('[data-action="remove-member"]').forEach(btn => {
-        btn.addEventListener('click', async () => {
+    // ── Mover de equipo ───────────────────────────────────────────────────────
+    content.querySelectorAll(`[data-action="move-team"][data-team-id="${tid}"]`).forEach(btn => {
+        btn.addEventListener('click', e => {
+            e.stopPropagation();
+            const uid    = btn.dataset.uid;
+            const menu   = document.getElementById(`memberMenu_${uid}`);
+            const others = _allTeams.filter(t => t.id !== tid);
+
+            if (!others.length) {
+                alert('No hay otros equipos disponibles.');
+                menu?.classList.remove('open');
+                return;
+            }
+
+            menu.innerHTML = `
+                <div class="dropdown-sub-form">
+                    <span class="dropdown-label">Mover a:</span>
+                    <select class="form-select form-select-sm" id="moveTeamSel_${uid}">
+                        ${others.map(t => `<option value="${t.id}">${_esc(t.name)}</option>`).join('')}
+                    </select>
+                    <div class="dropdown-sub-actions">
+                        <button class="btn btn-success btn-sm" id="confirmMove_${uid}">Mover</button>
+                        <button class="btn btn-secondary btn-sm" id="cancelMove_${uid}">×</button>
+                    </div>
+                </div>`;
+
+            document.getElementById(`confirmMove_${uid}`)?.addEventListener('click', async () => {
+                const newTid = parseInt(document.getElementById(`moveTeamSel_${uid}`)?.value);
+                const member = allUsers.find(u => String(u.id) === uid);
+                if (!member) return;
+                try {
+                    await addTeamMember(newTid, member.ncUserId);
+                    await _loadMyTeam(container);
+                } catch (err) { alert('Error: ' + err.message); }
+            });
+            document.getElementById(`cancelMove_${uid}`)?.addEventListener('click', () => {
+                menu?.classList.remove('open');
+            });
+        });
+    });
+
+    // ── Cambiar de rol ────────────────────────────────────────────────────────
+    content.querySelectorAll(`[data-action="change-role"][data-team-id="${tid}"]`).forEach(btn => {
+        btn.addEventListener('click', e => {
+            e.stopPropagation();
+            const uid       = btn.dataset.uid;
+            const menu      = document.getElementById(`memberMenu_${uid}`);
+            const member    = allUsers.find(u => String(u.id) === uid);
+            const curRole   = member?.role ?? 'member';
+            const isAdmin   = _user?.role === 'admin';
+
+            const roles = isAdmin
+                ? [{ v: 'member', l: 'Miembro' }, { v: 'leader', l: 'Líder' }, { v: 'admin', l: 'Admin' }]
+                : [{ v: 'member', l: 'Miembro' }];
+
+            menu.innerHTML = `
+                <div class="dropdown-sub-form">
+                    <span class="dropdown-label">Nuevo rol:</span>
+                    <select class="form-select form-select-sm" id="changeRoleSel_${uid}">
+                        ${roles.map(r => `<option value="${r.v}"${r.v === curRole ? ' selected' : ''}>${r.l}</option>`).join('')}
+                    </select>
+                    <div class="dropdown-sub-actions">
+                        <button class="btn btn-success btn-sm" id="confirmRole_${uid}">Cambiar</button>
+                        <button class="btn btn-secondary btn-sm" id="cancelRole_${uid}">×</button>
+                    </div>
+                </div>`;
+
+            document.getElementById(`confirmRole_${uid}`)?.addEventListener('click', async () => {
+                const newRole = document.getElementById(`changeRoleSel_${uid}`)?.value;
+                try {
+                    await setUserRole(uid, newRole);
+                    await _loadMyTeam(container);
+                } catch (err) { alert('Error: ' + err.message); }
+            });
+            document.getElementById(`cancelRole_${uid}`)?.addEventListener('click', () => {
+                menu?.classList.remove('open');
+            });
+        });
+    });
+
+    // ── Eliminar del equipo ───────────────────────────────────────────────────
+    content.querySelectorAll(`[data-action="remove-member"][data-team-id="${tid}"]`).forEach(btn => {
+        btn.addEventListener('click', async e => {
+            e.stopPropagation();
             if (!confirm('¿Remover a este miembro del equipo?')) return;
             try {
                 await removeTeamMember(btn.dataset.teamId, btn.dataset.uid);
-                _loadMyTeam(container);
+                await _loadMyTeam(container);
             } catch (err) { alert('Error: ' + err.message); }
         });
     });
 }
+
+function _closeAllDropdowns(root) {
+    (root ?? document).querySelectorAll('.action-dropdown.open').forEach(m => m.classList.remove('open'));
+}
+
+// Cerrar dropdowns al hacer click fuera
+document.addEventListener('click', () => _closeAllDropdowns(document));
 
 // ─── Teams (admin only) ──────────────────────────────────────────────────────
 
@@ -220,7 +393,7 @@ async function _loadTeams(container) {
                                     <input type="checkbox" class="team-tech-input" data-team-id="${t.id}"
                                         ${t.isTechTeam ? 'checked' : ''}>
                                 </td>
-                                <td>${(t.members ?? t.memberCount ?? 0)}</td>
+                                <td>${t.memberCount ?? 0}</td>
                                 <td>
                                     <button class="btn btn-secondary btn-sm" data-action="save-team" data-team-id="${t.id}">
                                         <i class="fas fa-save"></i>
@@ -235,7 +408,6 @@ async function _loadTeams(container) {
                 </div>
             </div>`;
 
-        // New team form
         content.querySelector('#btnNewTeam').addEventListener('click', () => {
             content.querySelector('#newTeamForm').style.display = 'flex';
         });
@@ -251,8 +423,6 @@ async function _loadTeams(container) {
                 _loadTeams(container);
             } catch (err) { alert('Error: ' + err.message); }
         });
-
-        // Save / delete
         content.querySelectorAll('[data-action="save-team"]').forEach(btn => {
             btn.addEventListener('click', async () => {
                 const tid  = btn.dataset.teamId;
@@ -275,86 +445,6 @@ async function _loadTeams(container) {
     }
 }
 
-// ─── Users (admin only) ──────────────────────────────────────────────────────
-
-async function _loadUsers(container, isAdmin) {
-    const content = container.querySelector('#adminContent');
-    content.innerHTML = '<div class="loading-state"><i class="fas fa-spinner fa-spin"></i> Cargando…</div>';
-    try {
-        const [users, teams] = await Promise.all([fetchAdminUsers(), fetchTeams()]);
-        const teamMap = {};
-        (teams ?? []).forEach(t => { teamMap[t.id] = t.name; });
-
-        content.innerHTML = `
-            <div class="section-card">
-                <h3 class="section-title"><i class="fas fa-user-cog"></i> Usuarios</h3>
-                <div class="table-wrapper">
-                    <table class="data-table">
-                        <thead><tr>
-                            <th>Usuario</th>
-                            <th>Equipo</th>
-                            <th>Job Title</th>
-                            <th>Rol</th>
-                            ${isAdmin ? '<th>Acciones</th>' : ''}
-                        </tr></thead>
-                        <tbody>
-                            ${(users ?? []).map(u => {
-                                const uid  = _esc(u.id ?? u.userId ?? '');
-                                const name = _esc(u.displayname || u.id || '');
-                                const team = teamMap[u.teamId] ? _esc(teamMap[u.teamId]) : '—';
-                                const role = u.role ?? 'member';
-                                return `
-                                <tr>
-                                    <td><div class="member-cell">
-                                        <div class="member-avatar sm">${_initials(u.displayname || u.id)}</div>
-                                        <div>
-                                            <div class="member-name">${name}</div>
-                                            <div class="member-role text-muted">${_esc(u.email ?? '')}</div>
-                                        </div>
-                                    </div></td>
-                                    <td>${team}</td>
-                                    <td>
-                                        <input type="text" class="form-input form-input-sm job-title-input"
-                                            value="${_esc(u.jobTitle ?? '')}" data-uid="${uid}" placeholder="Job title">
-                                    </td>
-                                    <td><span class="role-badge role-${role}">${role}</span></td>
-                                    ${isAdmin ? `
-                                    <td>
-                                        <select class="form-select form-select-sm role-select" data-uid="${uid}">
-                                            <option value="member"  ${role==='member'  ?'selected':''}>member</option>
-                                            <option value="leader"  ${role==='leader'  ?'selected':''}>leader</option>
-                                            <option value="admin"   ${role==='admin'   ?'selected':''}>admin</option>
-                                        </select>
-                                    </td>` : ''}
-                                </tr>`;
-                            }).join('')}
-                        </tbody>
-                    </table>
-                </div>
-            </div>`;
-
-        content.querySelectorAll('.job-title-input').forEach(input => {
-            input.addEventListener('change', async () => {
-                try { await updateAdminUser(input.dataset.uid, { jobTitle: input.value.trim() }); }
-                catch (err) { alert('Error: ' + err.message); }
-            });
-        });
-
-        if (isAdmin) {
-            content.querySelectorAll('.role-select').forEach(sel => {
-                sel.addEventListener('change', async () => {
-                    if (!confirm(`¿Cambiar rol a "${sel.value}"?`)) { return; }
-                    try { await setUserRole(sel.dataset.uid, sel.value); }
-                    catch (err) { alert('Error: ' + err.message); }
-                });
-            });
-        }
-
-    } catch (err) {
-        content.innerHTML = `<div class="error-state"><i class="fas fa-exclamation-circle"></i> ${_esc(err.message)}</div>`;
-    }
-}
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function _initials(name) {
@@ -362,5 +452,5 @@ function _initials(name) {
 }
 
 function _esc(str) {
-    return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
