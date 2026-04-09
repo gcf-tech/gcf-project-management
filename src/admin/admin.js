@@ -229,6 +229,12 @@ function _bindTeamEvents(content, teamId, container, allUsers) {
         });
     });
 
+    // Prevent clicks inside any open dropdown (including injected sub-forms with <select>)
+    // from bubbling to document and triggering the global close-all listener.
+    content.querySelectorAll(`.action-dropdown`).forEach(menu => {
+        menu.addEventListener('click', e => e.stopPropagation());
+    });
+
     // ── Mover de equipo ───────────────────────────────────────────────────────
     content.querySelectorAll(`[data-action="move-team"][data-team-id="${tid}"]`).forEach(btn => {
         btn.addEventListener('click', e => {
