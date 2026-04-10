@@ -53,7 +53,6 @@ function navigateTo(view) {
     // Lazy render cada vez (datos frescos)
     const container = document.getElementById(`view-${view}`);
     if (!container) return;
-
     switch (view) {
         case 'my-metrics':
             renderMyMetrics(container, _currentUser);
@@ -71,7 +70,6 @@ function navigateTo(view) {
 }
 
 function setupNav(user, isTechTeam) {
-    // Mostrar tabs según rol
     if (user.role === 'leader' || user.role === 'admin') {
         document.querySelectorAll('.nav-leader').forEach(el => el.style.display = '');
     }
@@ -179,11 +177,9 @@ async function init() {
     const user = await initAuth();
 
     if (!user) {
-        if (!CONFIG.NEXTCLOUD_OAUTH_CLIENT_ID) {
-            document.getElementById('userAvatar').textContent = '?';
-            document.getElementById('userName').textContent   = 'User';
-        }
         if (CONFIG.NEXTCLOUD_OAUTH_CLIENT_ID) return;
+        document.getElementById('userAvatar').textContent = '?';
+        document.getElementById('userName').textContent   = 'User';
     } else {
         document.getElementById('userAvatar').textContent = user.initials   || '?';
         document.getElementById('userName').textContent   = user.displayname || user.id || 'User';
@@ -192,7 +188,6 @@ async function init() {
 
     load();
 
-    // Cargar tareas y team info en paralelo
     let isTechTeam = false;
     const promises = [];
 
@@ -209,7 +204,7 @@ async function init() {
             fetchTeams().then(teams => {
                 const myTeam = (teams ?? []).find(t => t.id === _currentUser.teamId);
                 isTechTeam = myTeam?.isTechTeam ?? false;
-            }).catch(() => {}) // no crítico
+            }).catch(() => {})
         );
     }
 

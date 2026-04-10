@@ -5,4 +5,5 @@ export const CONFIG = {
     BACKEND_BASE_URL: 'https://portaltest.gcf.group/backend',
     NEXTCLOUD_URL: 'https://portaltest.gcf.group',
     NEXTCLOUD_OAUTH_CLIENT_ID: 'TLANYypSf2ZoVaukOsCZYzf7VqHiziNK4So20g0UW9SKV9XkreSfgCqP45Tb8CYg',
+    CLIENT_ID: 'activitytracker-prod-client-id-gcf2026',
 };

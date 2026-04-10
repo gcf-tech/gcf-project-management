@@ -116,3 +116,11 @@ export function formatTimeOfDay(isoStr) {
     const date = new Date(isoStr);
     return date.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
 }
+
+export function escHtml(str) {
+    return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+export function initials(name) {
+    return (name || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
+}

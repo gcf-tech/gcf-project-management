@@ -64,7 +64,6 @@ export async function saveTime(taskId, timeSpent, subtaskId = null, feedback = n
         await apiFetch(endpoint, {
             method: 'POST',
             body: JSON.stringify({ timeSpent, subtaskId, feedback }),
-            // ↑ FIJO: antes mandaba {tareaId, tiempoInvertido}
         });
     }
 
@@ -142,7 +141,6 @@ export async function createTask(data) {
 
     if (CONFIG.BACKEND_URL) {
         if (newTask.type === 'activity') {
-            // ↓ Activities van a su propio endpoint
             const payload = {
                 title:       newTask.title,
                 description: newTask.description ?? "",
@@ -155,7 +153,6 @@ export async function createTask(data) {
                 method: 'POST',
                 body: JSON.stringify(payload),
             });
-            // El backend retorna {success, activity} con column y type ya normalizados
             const activity = saved?.activity ?? (saved?.id ? saved : newTask);
             STATE.tasks.push(activity);
             save();
@@ -273,8 +270,7 @@ export async function completeTask(taskId) {
     if (task) {
         task.progress = 100;
         task.subtasks.forEach(s => (s.completed = true));
-        task.column = isAct ? 'activities' : 'completed'; // ← FIJO
-        // Las tareas completadas desaparecen del board (no hay columna 'completed' en el kanban)
+        task.column = isAct ? 'activities' : 'completed';
     }
     save();
 }

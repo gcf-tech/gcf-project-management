@@ -5,6 +5,7 @@ import {
     fetchSkillsComparison, fetchCompare, endorseSkill,
     evaluateUser, createSkill,
 } from '../dashboard/dashApi.js';
+import { escHtml as _esc, initials as _initials } from '../shared/utils.js';
 let _currentUser      = null;
 let _currentContainer = null;       // reference for re-renders
 let _pendingEndorse   = null;
@@ -443,12 +444,4 @@ function _scoreLevel(score) {
     if (score >= 8)    return 'high';
     if (score >= 5)    return 'mid';
     return 'low';
-}
-
-function _initials(name) {
-    return (name || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2).toUpperCase();
-}
-
-function _esc(str) {
-    return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
