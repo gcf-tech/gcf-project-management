@@ -275,6 +275,23 @@ export async function completeTask(taskId) {
     save();
 }
 
+export async function reopenTask(taskId) {
+    const isAct = _isActivity(taskId);
+
+    if (CONFIG.BACKEND_URL) {
+        const endpoint = isAct
+            ? `/activities/${taskId}/reabrir`
+            : `/tareas/${taskId}/reabrir`;
+        await apiFetch(endpoint, { method: 'POST' });
+    }
+
+    const task = STATE.tasks.find(t => t.id === taskId);
+    if (task) {
+        task.column = isAct ? 'activities' : 'actively-working';
+    }
+    save();
+}
+
 export async function fetchDeckBoards() {
     return deckFetch('/api/deck/boards');
 }

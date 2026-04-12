@@ -2,7 +2,7 @@
 
 import { STATE }            from './core/state.js';
 import { load }             from './core/storage.js';
-import { fetchTasks }       from './api/api.js';
+import { fetchTasks, reopenTask } from './api/api.js';
 import { renderBoard }      from './board/render.js';
 import { setupDragAndDrop } from './board/dragDrop.js';
 import { initAuth }         from './auth/auth.js';
@@ -145,6 +145,9 @@ async function handleClick(e) {
         case 'close-timer-action': closeTimerAction(); break;
         case 'timer-finalize':    await timerActionFinalize(taskId, type); break;
         case 'timer-stop':        timerActionStop(taskId, type); break;
+
+        // Reabrir tarea completada
+        case 'reopen-task':       await reopenTask(taskId); renderBoard(); break;
 
         // Deck
         case 'open-import-deck':  await openImportDeckModal(); break;
