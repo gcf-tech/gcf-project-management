@@ -288,6 +288,7 @@ export async function reopenTask(taskId) {
     const task = STATE.tasks.find(t => t.id === taskId);
     if (task) {
         task.column = isAct ? 'activities' : 'actively-working';
+        if (isAct) task.progress = 0;
     }
     save();
 }
