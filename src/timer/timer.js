@@ -144,10 +144,18 @@ export async function confirmPause(taskId, elapsedTime) {
     const observation = document.getElementById('pauseObservation').value.trim();
     const subtaskId   = STATE.timers[type]?.subtaskId ?? null;
 
-    await saveTime(taskId, elapsedTime, subtaskId, {
-        progress,
-        observation: observation || null,
-    });
+    if (subtaskId && subtaskId !== 'none') {
+        // El progreso ingresado corresponde a la subtarea, no a la tarea global
+        const sub = task.subtasks.find(s => s.id === subtaskId);
+        if (sub) sub.progress = progress;
+        await saveTime(taskId, elapsedTime, subtaskId, { observation: observation || null });
+        await updateTask(taskId, { subtasks: task.subtasks });
+    } else {
+        await saveTime(taskId, elapsedTime, subtaskId, {
+            progress,
+            observation: observation || null,
+        });
+    }
 
     if (task.type === 'project') {
         const helpVisible = document.getElementById('pauseHelpVisible')?.checked ?? false;
@@ -269,6 +277,15 @@ function _openPauseFeedbackModal(taskId, elapsedTime) {
     const task = STATE.tasks.find(t => t.id === taskId);
     if (!task) return;
 
+    const subtaskId = STATE.timers[task.type]?.subtaskId ?? null;
+    const activeSub = subtaskId && subtaskId !== 'none'
+        ? task.subtasks.find(s => s.id === subtaskId)
+        : null;
+    const progressLabel = activeSub
+        ? `¿Qué porcentaje de "${activeSub.text}" completaste?`
+        : '¿Qué porcentaje de la tarea completaste?';
+    const progressValue = activeSub ? (activeSub.progress ?? 0) : task.progress;
+
     document.getElementById('modalDetailTitle').textContent = 'Record Progress';
 
     document.getElementById('modalDetailBody').innerHTML = `
@@ -278,11 +295,11 @@ function _openPauseFeedbackModal(taskId, elapsedTime) {
                 Time recorded: ${formatTime(elapsedTime)}
             </div>
             <div class="form-group">
-                <label class="form-label">Progress percentage</label>
+                <label class="form-label">${progressLabel}</label>
                 <div class="progress-input-group">
-                    <input type="range" id="pauseProgress" min="0" max="100" value="${task.progress}"
+                    <input type="range" id="pauseProgress" min="0" max="100" value="${progressValue}"
                            oninput="document.getElementById('pauseProgressValue').textContent = this.value + '%'">
-                    <span id="pauseProgressValue">${task.progress}%</span>
+                    <span id="pauseProgressValue">${progressValue}%</span>
                 </div>
             </div>
             <div class="form-group">

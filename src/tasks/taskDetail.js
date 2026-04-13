@@ -1,7 +1,7 @@
 /** Modal de detalle de tarea: time log, subtareas, observaciones y edición de tiempo. */
 
 import { STATE }      from '../core/state.js';
-import { setTaskTime } from '../api/api.js';
+import { setTaskTime, updateTask } from '../api/api.js';
 import { save }        from '../core/storage.js';
 import { renderBoard } from '../board/render.js';
 import { formatTime, formatDate, isOverdue, formatTimeCompact, formatLogDate } from '../shared/utils.js';
@@ -112,7 +112,7 @@ export function openTaskDetail(taskId) {
     openModal('modalTaskDetail');
 }
 
-export function toggleSubtask(taskId, subtaskId) {
+export async function toggleSubtask(taskId, subtaskId) {
     const task    = STATE.tasks.find(t => t.id === taskId);
     const subtask = task?.subtasks.find(s => s.id === subtaskId);
     if (!subtask) return;
@@ -123,6 +123,7 @@ export function toggleSubtask(taskId, subtaskId) {
     );
 
     save();
+    await updateTask(taskId, { subtasks: task.subtasks });
     openTaskDetail(taskId);
     renderBoard();
 }
