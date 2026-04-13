@@ -23,21 +23,30 @@ export async function openImportDeckModal() {
         if (boards.length === 0) {
             content.innerHTML = `
                 <p class="text-center text-muted">
-                    No boards found in your Nextcloud Deck account.
+                    No se encontraron tableros en tu cuenta de Nextcloud Deck.
                 </p>`;
             return;
         }
 
+        // Sondear tarjetas de todos los boards en paralelo para detectar vacíos/sin acceso
+        const cardResults = await Promise.allSettled(boards.map(b => fetchDeckCards(b.id)));
+        const boardsWithStatus = boards.map((b, i) => ({
+            ...b,
+            hasCards: cardResults[i].status === 'fulfilled' && cardResults[i].value.length > 0,
+        }));
+
         content.innerHTML = `
             <div class="form-group mb-2">
                 <label class="form-label" for="deckBoardSelect">
-                    <i class="fas fa-columns"></i> Select a board
+                    <i class="fas fa-columns"></i> Selecciona un tablero
                 </label>
                 <select id="deckBoardSelect" class="form-select"
                         data-action="select-deck-board">
-                    <option value="">-- Choose a board --</option>
-                    ${boards.map(b => `
-                        <option value="${b.id}">${_boardTitle(b)}</option>
+                    <option value="">-- Elige un tablero --</option>
+                    ${boardsWithStatus.map(b => `
+                        <option value="${b.id}"${b.hasCards ? '' : ' disabled'}>
+                            ${_boardTitle(b)}${b.hasCards ? '' : ' (sin tarjetas)'}
+                        </option>
                     `).join('')}
                 </select>
             </div>
@@ -68,7 +77,7 @@ export async function selectDeckBoard(boardId) {
         if (_deckCards.length === 0) {
             cardList.innerHTML = `
                 <p class="text-center text-muted">
-                    This board has no cards yet.
+                    No se encontraron tarjetas para importar en este tablero.
                 </p>`;
             return;
         }
@@ -108,10 +117,12 @@ export async function selectDeckBoard(boardId) {
                 }).join('')}
             </div>`;
 
-    } catch (err) {
-        cardList.innerHTML = `<p class="text-center text-danger">
-            <i class="fas fa-exclamation-circle"></i> ${err.message}
-        </p>`;
+    } catch {
+        _deckCards = [];
+        cardList.innerHTML = `
+            <p class="text-center text-muted">
+                No se encontraron tarjetas para importar en este tablero.
+            </p>`;
     }
 }
 
