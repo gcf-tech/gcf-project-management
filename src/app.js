@@ -3,7 +3,7 @@
 import { STATE }            from './core/state.js';
 import { load }             from './core/storage.js';
 import { fetchTasks, reopenTask } from './api/api.js';
-import { renderBoard }      from './board/render.js';
+import { renderBoard, toggleCompletedAccordion } from './board/render.js';
 import { setupDragAndDrop } from './board/dragDrop.js';
 import { initAuth }         from './auth/auth.js';
 import { CONFIG }           from './core/config.js';
@@ -26,7 +26,7 @@ import {
 
 import {
     openImportDeckModal, selectDeckBoard,
-    toggleDeckSelection, importSelectedDeckCards,
+    toggleDeckSelection, importSelectedDeckCards, filterDeckCards,
 } from './deck/deckImport.js';
 
 import { confirmCompletion } from './timer/completionModal.js';
@@ -149,6 +149,9 @@ async function handleClick(e) {
         // Reabrir tarea completada
         case 'reopen-task':       await reopenTask(taskId); renderBoard(); break;
 
+        // Acordeón de completadas
+        case 'toggle-completed-accordion': toggleCompletedAccordion(el.dataset.colKey); break;
+
         // Deck
         case 'open-import-deck':  await openImportDeckModal(); break;
         case 'toggle-deck':       toggleDeckSelection(deckId); break;
@@ -170,6 +173,12 @@ function handleChange(e) {
         case 'select-subtask':    setSubtaskSelection(taskId, el.value); break;
         case 'select-deck-board': selectDeckBoard(el.value); break;
     }
+}
+
+function handleInput(e) {
+    const el = e.target.closest('[data-action]');
+    if (!el) return;
+    if (el.dataset.action === 'filter-deck-cards') filterDeckCards(el.value);
 }
 
 // ---------------------------------------------------------------------------
@@ -221,6 +230,7 @@ async function init() {
 
     document.addEventListener('click',  handleClick);
     document.addEventListener('change', handleChange);
+    document.addEventListener('input',  handleInput);
 
     document.addEventListener('keydown', e => {
         if (e.key === 'Escape') {

@@ -285,3 +285,81 @@
     font-weight: 600;
     color: var(--color-primary);
 }
+
+/* ── Acordeón de tareas completadas ─────────────────────────────────── */
+
+.completed-accordion {
+    margin-top: 0.5rem;
+}
+
+.completed-accordion-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border: 1px dashed var(--color-border);
+    border-radius: var(--radius-md);
+    background: transparent;
+    cursor: pointer;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    transition: background var(--transition-fast), color var(--transition-fast);
+    text-align: left;
+}
+
+.completed-accordion-header:hover {
+    background: var(--color-secondary-light);
+    color: var(--color-text-primary);
+}
+
+.completed-accordion-header span {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.completed-accordion-header span i {
+    color: var(--color-success, #22c55e);
+}
+
+.completed-accordion-chevron {
+    transition: transform var(--transition-fast);
+    flex-shrink: 0;
+}
+
+.completed-accordion.open .completed-accordion-chevron {
+    transform: rotate(180deg);
+}
+
+.completed-accordion-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    overflow: hidden;
+    max-height: 0;
+    transition: max-height 0.3s ease, padding-top 0.3s ease;
+    padding-top: 0;
+}
+
+.completed-accordion.open .completed-accordion-body {
+    max-height: 9999px;
+    padding-top: 0.75rem;
+}
+
+.completed-in-accordion {
+    opacity: 0.6;
+    cursor: default;
+}
+
+.completed-in-accordion:hover {
+    border-color: var(--color-border);
+    box-shadow: none;
+    opacity: 0.75;
+}
+
+.completed-in-accordion .task-timer,
+.completed-in-accordion .subtask-selector {
+    display: none;
+}

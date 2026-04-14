@@ -7,7 +7,16 @@ import { formatDate }  from '../shared/utils.js';
 import { CONFIG }      from '../core/config.js';
 import { openModal, closeModal } from '../shared/modal.js';
 
+const DONE_STACK_RE = /^(done|finalizado|finalizada|completed|completado|completada|terminado|terminada|finished|cerrado|cerrada)$/i;
+
 let _deckCards = [];
+let _activeDeckCards = [];
+
+function _isFinished(card) {
+    if (card.archived === true) return true;
+    const stackName = card.stack?.title ?? card.stackTitle ?? '';
+    return DONE_STACK_RE.test(stackName.trim());
+}
 
 export async function openImportDeckModal() {
     STATE.selectedDeckCards.clear();
@@ -62,6 +71,7 @@ export async function openImportDeckModal() {
 export async function selectDeckBoard(boardId) {
     STATE.selectedDeckCards.clear();
     _deckCards = [];
+    _activeDeckCards = [];
 
     const cardList = document.getElementById('deckCardList');
     if (!boardId) {
@@ -73,57 +83,103 @@ export async function selectDeckBoard(boardId) {
 
     try {
         _deckCards = await fetchDeckCards(boardId);
+        _activeDeckCards = _deckCards.filter(c => !_isFinished(c));
 
-        if (_deckCards.length === 0) {
+        if (_activeDeckCards.length === 0) {
             cardList.innerHTML = `
                 <p class="text-center text-muted">
-                    No se encontraron tarjetas para importar en este tablero.
+                    No hay tarjetas activas para importar en este tablero.
                 </p>`;
             return;
         }
 
-        const importedIds = new Set(
-            STATE.tasks.filter(t => t.deck_card_id).map(t => String(t.deck_card_id))
-        );
-
         cardList.innerHTML = `
-            <div class="form-label mb-1" style="margin-top:.75rem;">
-                <i class="fas fa-credit-card"></i>
-                Cards (${_deckCards.length}) — click to select
+            <div class="form-group mb-2" style="margin-top:.75rem;">
+                <input id="deckCardSearch"
+                       type="text"
+                       class="form-control"
+                       placeholder="Buscar tarjeta..."
+                       data-action="filter-deck-cards"
+                       autocomplete="off">
             </div>
-            <div class="deck-list">
-                ${_deckCards.map(card => {
-                    const alreadyImported = importedIds.has(String(card.id));
-                    return `
-                    <div class="deck-item${alreadyImported ? ' already-imported' : ''}"
-                         data-deck-id="${card.id}"
-                         ${alreadyImported ? '' : `data-action="toggle-deck" data-deck-id="${card.id}"`}>
-                        <div class="deck-item-checkbox">
-                            ${alreadyImported
-                                ? '<i class="fas fa-check-double" title="Already imported"></i>'
-                                : '<i class="fas fa-check" style="display:none;"></i>'}
-                        </div>
-                        <div class="deck-item-content">
-                            <div class="deck-item-title">${card.title}</div>
-                            <div class="deck-item-meta">
-                                ${alreadyImported
-                                    ? '<i class="fas fa-ban"></i> Already imported'
-                                    : card.duedate
-                                        ? `<i class="fas fa-calendar"></i> ${formatDate(card.duedate.split('T')[0])}`
-                                        : 'No deadline'}
-                            </div>
-                        </div>
-                    </div>`;
-                }).join('')}
+            <div class="form-label mb-1">
+                <i class="fas fa-credit-card"></i>
+                Cards (<span id="deckCardCount">${_activeDeckCards.length}</span>) — click to select
+            </div>
+            <div id="deckCardItems" class="deck-list">
+                ${_renderCardItems(_activeDeckCards)}
             </div>`;
 
     } catch {
         _deckCards = [];
+        _activeDeckCards = [];
         cardList.innerHTML = `
             <p class="text-center text-muted">
                 No se encontraron tarjetas para importar en este tablero.
             </p>`;
     }
+}
+
+export function filterDeckCards(query) {
+    const q = query.trim().toLowerCase();
+    const filtered = q
+        ? _activeDeckCards.filter(c => c.title.toLowerCase().includes(q))
+        : _activeDeckCards;
+
+    const container = document.getElementById('deckCardItems');
+    const counter   = document.getElementById('deckCardCount');
+    if (!container) return;
+
+    if (filtered.length === 0) {
+        container.innerHTML = `
+            <p class="text-center text-muted" style="padding:.75rem 0;">
+                No hay tarjetas que coincidan con la búsqueda.
+            </p>`;
+        if (counter) counter.textContent = '0';
+        return;
+    }
+
+    container.innerHTML = _renderCardItems(filtered);
+    if (counter) counter.textContent = filtered.length;
+
+    // Restore selection highlight for already-selected cards
+    for (const deckId of STATE.selectedDeckCards) {
+        const item = container.querySelector(`[data-deck-id="${deckId}"]`);
+        if (item) {
+            item.classList.add('selected');
+            const icon = item.querySelector('.fa-check');
+            if (icon) icon.style.display = 'block';
+        }
+    }
+}
+
+function _renderCardItems(cards) {
+    const importedIds = new Set(
+        STATE.tasks.filter(t => t.deck_card_id).map(t => String(t.deck_card_id))
+    );
+    return cards.map(card => {
+        const alreadyImported = importedIds.has(String(card.id));
+        return `
+        <div class="deck-item${alreadyImported ? ' already-imported' : ''}"
+             data-deck-id="${card.id}"
+             ${alreadyImported ? '' : `data-action="toggle-deck" data-deck-id="${card.id}"`}>
+            <div class="deck-item-checkbox">
+                ${alreadyImported
+                    ? '<i class="fas fa-check-double" title="Already imported"></i>'
+                    : '<i class="fas fa-check" style="display:none;"></i>'}
+            </div>
+            <div class="deck-item-content">
+                <div class="deck-item-title">${card.title}${alreadyImported ? ' <span class="text-muted" style="font-size:.8em;">(ya importada)</span>' : ''}</div>
+                <div class="deck-item-meta">
+                    ${alreadyImported
+                        ? '<i class="fas fa-ban"></i> Already imported'
+                        : card.duedate
+                            ? `<i class="fas fa-calendar"></i> ${formatDate(card.duedate.split('T')[0])}`
+                            : 'No deadline'}
+                </div>
+            </div>
+        </div>`;
+    }).join('');
 }
 
 export function toggleDeckSelection(deckId) {

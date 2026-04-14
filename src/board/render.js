@@ -4,6 +4,16 @@ import { STATE }      from '../core/state.js';
 import { updateKPIs } from '../kpi/kpi.js';
 import { formatTime, formatDate, isOverdue, getActivityTypeLabel, formatTimeCompact, formatLogDate, formatRelativeTime, formatTimeOfDay } from '../shared/utils.js';
 
+// Columnas que separan tareas completadas en acordeón
+const ACCORDION_COLUMNS = ['actively-working', 'activities'];
+
+// Estado local del acordeón (no persiste)
+const _accordionOpen = { 'actively-working': false, 'activities': false };
+
+function _isCompletedTask(task) {
+    return task.column === 'completed' || task.progress === 100;
+}
+
 export function renderBoard() {
     const columns = {
         'actively-working': document.getElementById('columnActivelyWorking'),
@@ -12,14 +22,28 @@ export function renderBoard() {
     };
 
     Object.values(columns).forEach(col => (col.innerHTML = ''));
-    const counts = { 'actively-working': 0, 'working-now': 0, 'activities': 0 };
+    const counts      = { 'actively-working': 0, 'working-now': 0, 'activities': 0 };
+    const completedBy = { 'actively-working': [], 'activities': [] };
 
     STATE.tasks.forEach(task => {
         const displayColumn = counts.hasOwnProperty(task.column) ? task.column : 'actively-working';
         const col = columns[displayColumn];
         if (!col) return;
-        col.appendChild(createTaskCard(task));
-        counts[displayColumn]++;
+
+        if (ACCORDION_COLUMNS.includes(displayColumn) && _isCompletedTask(task)) {
+            completedBy[displayColumn].push(task);
+        } else {
+            col.appendChild(createTaskCard(task));
+            counts[displayColumn]++;
+        }
+    });
+
+    // Acordeones al final de cada columna que los admite
+    ACCORDION_COLUMNS.forEach(colKey => {
+        const col = columns[colKey];
+        if (completedBy[colKey].length > 0) {
+            col.appendChild(_createCompletedAccordion(colKey, completedBy[colKey]));
+        }
     });
 
     document.getElementById('countActivelyWorking').textContent = counts['actively-working'];
@@ -27,7 +51,8 @@ export function renderBoard() {
     document.getElementById('countActivities').textContent      = counts['activities'];
 
     Object.entries(columns).forEach(([key, col]) => {
-        if (counts[key] === 0) {
+        const total = counts[key] + (completedBy[key]?.length ?? 0);
+        if (total === 0) {
             col.innerHTML = `
                 <div class="column-empty">
                     <i class="fas fa-inbox"></i>
@@ -37,6 +62,41 @@ export function renderBoard() {
     });
 
     updateKPIs();
+}
+
+export function toggleCompletedAccordion(colKey) {
+    _accordionOpen[colKey] = !_accordionOpen[colKey];
+    const el = document.querySelector(`.completed-accordion[data-col-key="${colKey}"]`);
+    if (el) el.classList.toggle('open', _accordionOpen[colKey]);
+}
+
+function _createCompletedAccordion(colKey, tasks) {
+    const isOpen  = _accordionOpen[colKey];
+    const wrapper = document.createElement('div');
+    wrapper.className = `completed-accordion${isOpen ? ' open' : ''}`;
+    wrapper.dataset.colKey = colKey;
+
+    const header = document.createElement('button');
+    header.className = 'completed-accordion-header';
+    header.dataset.action = 'toggle-completed-accordion';
+    header.dataset.colKey  = colKey;
+    header.innerHTML = `
+        <span><i class="fas fa-check-circle"></i> Completadas (${tasks.length})</span>
+        <i class="fas fa-chevron-down completed-accordion-chevron"></i>`;
+
+    const body = document.createElement('div');
+    body.className = 'completed-accordion-body';
+
+    tasks.forEach(task => {
+        const card = createTaskCard(task);
+        card.draggable = false;
+        card.classList.add('completed-in-accordion');
+        body.appendChild(card);
+    });
+
+    wrapper.appendChild(header);
+    wrapper.appendChild(body);
+    return wrapper;
 }
 
 export function createTaskCard(task) {
