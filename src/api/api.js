@@ -61,9 +61,12 @@ export async function saveTime(taskId, timeSpent, subtaskId = null, feedback = n
             ? `/activities/${taskId}/time`
             : `/tareas/${taskId}/time`;
 
+        const task = STATE.tasks.find(t => t.id === taskId);
+        const absoluteTime = (task?.timeSpent ?? 0) + timeSpent;
+
         await apiFetch(endpoint, {
             method: 'POST',
-            body: JSON.stringify({ timeSpent, subtaskId, feedback }),
+            body: JSON.stringify({ timeSpent, subtaskId, feedback, absoluteTime }),
         });
     }
 
