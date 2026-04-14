@@ -11,7 +11,8 @@ const ACCORDION_COLUMNS = ['actively-working', 'activities'];
 const _accordionOpen = { 'actively-working': false, 'activities': false };
 
 function _isCompletedTask(task) {
-    return task.column === 'completed' || task.progress === 100;
+    if (task.type === 'activity') return task.progress === 100 && !!task.completedAt;
+    return task.column === 'completed';
 }
 
 export function renderBoard() {
@@ -159,7 +160,7 @@ export function createTaskCard(task) {
                     <button class="task-dropdown-item" data-action="task-detail" data-task-id="${task.id}">
                         <i class="fas fa-expand"></i> Detalle
                     </button>
-                    ${(task.column === 'completed' || (task.type === 'activity' && task.progress === 100)) ? `
+                    ${(task.column === 'completed' || (task.type === 'activity' && task.progress === 100 && !!task.completedAt)) ? `
                     <button class="task-dropdown-item" data-action="reopen-task" data-task-id="${task.id}">
                         <i class="fas fa-undo"></i> ¿No has terminado? Reabrir
                     </button>` : ''}
