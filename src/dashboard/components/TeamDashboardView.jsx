@@ -150,6 +150,24 @@ export default function TeamDashboardView({ user }) {
 
     const statusChart = useMemo(() => ({ labels: [], data: [] }), []);
 
+    // Build capacity heatmap data from deepWorkByDay: { userId: { 'Lun': hours, ... } }
+    const capacity = useMemo(() => {
+        const DAY_MAP = { 1: 'Lun', 2: 'Mar', 3: 'Mié', 4: 'Jue', 5: 'Vie' };
+        const result = {};
+        for (const m of memberMetrics) {
+            const accum = {};
+            for (const [dateStr, seconds] of Object.entries(m.deepWorkByDay ?? {})) {
+                const dayName = DAY_MAP[new Date(`${dateStr}T12:00:00`).getDay()];
+                if (!dayName) continue; // skip weekends
+                accum[dayName] = (accum[dayName] ?? 0) + seconds;
+            }
+            result[m.userId] = Object.fromEntries(
+                Object.entries(accum).map(([day, secs]) => [day, Math.round((secs / 3600) * 10) / 10])
+            );
+        }
+        return result;
+    }, [memberMetrics]);
+
     const handleTeamChange = (val) => {
         if (constraints.lockTeam) return;
         setSelectedTeam(val);
@@ -278,7 +296,7 @@ export default function TeamDashboardView({ user }) {
                     </p>
                     <CapacityHeatmap
                         members={filteredMetrics}
-                        capacity={{}}
+                        capacity={capacity}
                     />
                 </div>
             </div>

@@ -39,6 +39,8 @@ export default function CapacityHeatmap({ members = [], capacity = {} }) {
 
     if (!rows.length) return null;
 
+    // Always render the table when there are members, even if all hours are 0.
+    // Cells with 0 hours get cap-level-0 (grey "Sin datos") via levelClass.
     return (
         <div className="capacity-heatmap">
             <table className="data-table capacity-table">
@@ -53,8 +55,8 @@ export default function CapacityHeatmap({ members = [], capacity = {} }) {
                         <tr key={row.userId}>
                             <td>
                                 <div className="member-cell">
-                                    <div className="member-avatar sm">{initials(row.displayname)}</div>
-                                    <span className="member-name">{row.displayname}</span>
+                                    <div className="member-avatar sm">{initials(row.displayName)}</div>
+                                    <span className="member-name">{row.displayName}</span>
                                 </div>
                             </td>
                             {row.days.map(cell => (

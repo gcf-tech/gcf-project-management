@@ -257,15 +257,18 @@ export async function updateColumn(taskId, column) {
 
 export async function completeTask(taskId) {
     const isAct = _isActivity(taskId);
+    let savedColumn = isAct ? 'activities' : 'completed';
 
     if (CONFIG.BACKEND_URL) {
         if (isAct) {
-            await apiFetch(`/activities/${taskId}`, {
+            const saved = await apiFetch(`/activities/${taskId}`, {
                 method: 'PATCH',
                 body: JSON.stringify({ progress: 100 }),
             });
+            if (saved?.activity?.column) savedColumn = saved.activity.column;
         } else {
-            await apiFetch(`/tareas/${taskId}/finalizar`, { method: 'POST' });
+            const saved = await apiFetch(`/tareas/${taskId}/finalizar`, { method: 'POST' });
+            if (saved?.task?.column) savedColumn = saved.task.column;
         }
     }
 
@@ -273,7 +276,7 @@ export async function completeTask(taskId) {
     if (task) {
         task.progress = 100;
         task.subtasks.forEach(s => (s.completed = true));
-        task.column = isAct ? 'activities' : 'completed';
+        task.column = savedColumn;
     }
     save();
 }

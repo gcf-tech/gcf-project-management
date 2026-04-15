@@ -112,6 +112,9 @@ export async function confirmCompletion(taskId, elapsed, subtaskId) {
         await completeTask(taskId);
     }
 
+    const debugTask = STATE.tasks.find(t => t.id === taskId);
+    console.log('[DEBUG] task.column after completeTask:', debugTask?.column, '| type:', debugTask?.type);
+
     closeModal('modalTaskDetail');
     renderBoard();
 }
