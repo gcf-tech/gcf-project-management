@@ -181,7 +181,35 @@ export default function TeamDashboardView({ user }) {
 
     const hasData = !metricsLoading && teamData !== null;
 
-    const statusChart = useMemo(() => ({ labels: [], data: [] }), []);
+    const STATUS_LABELS = {
+        'completed':        'Completadas',
+        'actively-working': 'En proceso',
+        'working-now':      'Trabajando ahora',
+    };
+
+    const statusChart = useMemo(() => {
+        let statusMap = {};
+
+        if (selectedMember !== 'all' && filteredMetrics.length > 0) {
+            statusMap = filteredMetrics[0].tasksByStatus ?? {};
+        } else if (teamData?.tasksByStatus) {
+            // Single team: use the pre-aggregated team-level query
+            statusMap = teamData.tasksByStatus;
+        } else {
+            // All teams combined: sum each member's tasksByStatus
+            for (const m of memberMetrics) {
+                for (const [s, c] of Object.entries(m.tasksByStatus ?? {})) {
+                    statusMap[s] = (statusMap[s] ?? 0) + c;
+                }
+            }
+        }
+
+        const entries = Object.entries(statusMap).filter(([, c]) => c > 0);
+        return {
+            labels: entries.map(([s]) => STATUS_LABELS[s] ?? s),
+            data:   entries.map(([, c]) => c),
+        };
+    }, [teamData, memberMetrics, filteredMetrics, selectedMember]);
 
     const capacity = useMemo(() => {
         const DAY_MAP = { 1: 'Lun', 2: 'Mar', 3: 'Mié', 4: 'Jue', 5: 'Vie' };
@@ -332,19 +360,6 @@ export default function TeamDashboardView({ user }) {
             <div className="charts-grid mx">
                 <div className="chart-card">
                     <h3 className="chart-title">
-                        <i className="fas fa-chart-area" /> Tendencia de Entrega – Individual
-                    </h3>
-                    <p className="text-muted text-sm" style={{ marginBottom: '0.5rem' }}>
-                        Días promedio vs deadline por persona. Sobre 0 = entrega temprana; bajo 0 = tardía.
-                    </p>
-                    {trendLoading || membersChartProps.datasets.length === 0
-                        ? <TrendPlaceholder loading={trendLoading} />
-                        : <AreaChart labels={membersChartProps.labels} datasets={membersChartProps.datasets} />
-                    }
-                </div>
-
-                <div className="chart-card">
-                    <h3 className="chart-title">
                         <i className="fas fa-chart-area" /> Tendencia de Entrega – Equipos
                     </h3>
                     <p className="text-muted text-sm" style={{ marginBottom: '0.5rem' }}>
@@ -355,6 +370,19 @@ export default function TeamDashboardView({ user }) {
                     {trendLoading || teamsChartProps.datasets.length === 0
                         ? <TrendPlaceholder loading={trendLoading} />
                         : <AreaChart labels={teamsChartProps.labels} datasets={teamsChartProps.datasets} />
+                    }
+                </div>
+
+                <div className="chart-card">
+                    <h3 className="chart-title">
+                        <i className="fas fa-chart-area" /> Tendencia de Entrega – Individual
+                    </h3>
+                    <p className="text-muted text-sm" style={{ marginBottom: '0.5rem' }}>
+                        Días promedio vs deadline por persona. Sobre 0 = entrega temprana; bajo 0 = tardía.
+                    </p>
+                    {trendLoading || membersChartProps.datasets.length === 0
+                        ? <TrendPlaceholder loading={trendLoading} />
+                        : <AreaChart labels={membersChartProps.labels} datasets={membersChartProps.datasets} />
                     }
                 </div>
             </div>
