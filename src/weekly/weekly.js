@@ -14,15 +14,17 @@ const HOUR_END     = 23;
 const PX_PER_HOUR  = 60;
 const AVAIL_START  = 7;
 const AVAIL_END    = 16;
+const SNAP_MINUTES = 15;
 
 const DAY_NAMES   = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const MONTH_NAMES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 
-let _refDate       = new Date();
-let _container     = null;
-let _dragBlockId   = null;
-let _dragTaskId    = null;
-let _weekStartIso  = null;
+let _refDate           = new Date();
+let _container         = null;
+let _dragBlockId       = null;
+let _dragTaskId        = null;
+let _dragBlockDuration = 0;
+let _weekStartIso      = null;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -35,6 +37,7 @@ export function renderWeekly(container) {
     if (!container._weeklyInit) {
         container._weeklyInit = true;
         _setupDragDrop();
+        _setupResize();
         window.addEventListener('preferences-updated', () => _render());
         window.addEventListener('resize', _updateStickyMetrics);
     }
@@ -57,6 +60,15 @@ export function handleWeeklyClick(action, el) {
         case 'weekly-add-block': {
             const day = parseInt(el.dataset.day, 10);
             openBlockModal(day, _weekStartIso, () => _render());
+            return true;
+        }
+        case 'weekly-edit-block': {
+            const blockId = parseInt(el.dataset.blockId, 10);
+            const block   = getBlocks().find(b => b.id === blockId);
+            if (block) openBlockModal(
+                { mode: 'edit', day: block.day, weekStartIso: _weekStartIso, block },
+                () => _render()
+            );
             return true;
         }
         case 'weekly-remove-block': {
@@ -89,6 +101,7 @@ async function _render() {
             ${_renderNav(days)}
             <div class="weekly-scroll">
                 ${_renderIndicators(days, blocks)}
+                ${_renderWeekProgress(days)}
                 <div class="weekly-grid">
                     ${_renderTimeAxis()}
                     <div class="weekly-columns" id="weeklyColumns">
@@ -113,13 +126,11 @@ function _updateStickyMetrics() {
         const chrome     = (pageHeader?.offsetHeight ?? 0) + (appNav?.offsetHeight ?? 0);
         document.documentElement.style.setProperty('--weekly-page-chrome', chrome + 'px');
 
-        const view       = _container.querySelector('.weekly-view');
-        const indicators = _container.querySelector('.weekly-indicators');
-        const colHeader  = _container.querySelector('.weekly-col-header');
+        const view      = _container.querySelector('.weekly-view');
+        const colHeader = _container.querySelector('.weekly-col-header');
         if (!view) return;
 
-        if (indicators) view.style.setProperty('--weekly-indicators-height', indicators.offsetHeight + 'px');
-        if (colHeader)  view.style.setProperty('--weekly-col-header-height', colHeader.offsetHeight + 'px');
+        if (colHeader) view.style.setProperty('--weekly-col-header-height', colHeader.offsetHeight + 'px');
     });
 }
 
@@ -311,7 +322,9 @@ function _renderBlock(block) {
         <div class="weekly-block ${blockClass}"
              style="${colorStyle}${styleBase}"
              draggable="true"
+             data-action="weekly-edit-block"
              data-block-id="${block.id}">
+            <div class="weekly-block-resize weekly-block-resize-top"></div>
             <div class="weekly-block-title">${typeIcon}${_esc(title)}</div>
             ${height >= 40
                 ? `<div class="weekly-block-time">${block.start_time}–${block.end_time} · ${durH}h</div>`
@@ -320,6 +333,7 @@ function _renderBlock(block) {
                     data-action="weekly-remove-block"
                     data-block-id="${block.id}"
                     title="Eliminar bloque">×</button>
+            <div class="weekly-block-resize weekly-block-resize-bottom"></div>
         </div>`;
 }
 
@@ -327,6 +341,16 @@ function _renderBlock(block) {
 
 function _setupDragDrop() {
     if (!_container) return;
+
+    // Intercept remove-button clicks so they don't bubble up and trigger
+    // the weekly-edit-block action on the parent .weekly-block element.
+    _container.addEventListener('click', e => {
+        const rm = e.target.closest('.weekly-block-remove');
+        if (!rm) return;
+        e.stopPropagation();
+        const blockId = parseInt(rm.dataset.blockId, 10);
+        removeBlock(blockId).then(ok => { if (ok) _render(); });
+    });
 
     _container.addEventListener('dragstart', e => {
         const blockEl  = e.target.closest('[data-block-id]');
@@ -337,9 +361,14 @@ function _setupDragDrop() {
             _dragTaskId  = null;
             blockEl.classList.add('dragging');
             e.dataTransfer.effectAllowed = 'move';
+            const block = getBlocks().find(b => b.id === _dragBlockId);
+            _dragBlockDuration = block
+                ? timeToMinutes(block.end_time) - timeToMinutes(block.start_time)
+                : 60;
         } else if (urgentEl) {
-            _dragTaskId  = urgentEl.dataset.urgentTaskId;
-            _dragBlockId = null;
+            _dragTaskId        = urgentEl.dataset.urgentTaskId;
+            _dragBlockId       = null;
+            _dragBlockDuration = 0;
             urgentEl.classList.add('dragging');
             e.dataTransfer.effectAllowed = 'copy';
         }
@@ -348,6 +377,8 @@ function _setupDragDrop() {
     _container.addEventListener('dragend', () => {
         _container.querySelectorAll('.dragging').forEach(el => el.classList.remove('dragging'));
         _container.querySelectorAll('.drop-target').forEach(el => el.classList.remove('drop-target'));
+        _container.querySelectorAll('.weekly-drop-hint').forEach(h => h.remove());
+        _dragBlockDuration = 0;
     }, true);
 
     _container.addEventListener('dragover', e => {
@@ -357,11 +388,15 @@ function _setupDragDrop() {
         e.dataTransfer.dropEffect = _dragBlockId !== null ? 'move' : 'copy';
         _container.querySelectorAll('.drop-target').forEach(el => el.classList.remove('drop-target'));
         col.classList.add('drop-target');
+        if (_dragBlockId !== null) _updateDropHint(col, e.clientY);
     });
 
     _container.addEventListener('dragleave', e => {
         const col = e.target.closest('.weekly-col-body');
-        if (col && !col.contains(e.relatedTarget)) col.classList.remove('drop-target');
+        if (col && !col.contains(e.relatedTarget)) {
+            col.classList.remove('drop-target');
+            col.querySelector('.weekly-drop-hint')?.remove();
+        }
     });
 
     _container.addEventListener('drop', async e => {
@@ -369,17 +404,205 @@ function _setupDragDrop() {
         if (!col) return;
         e.preventDefault();
         col.classList.remove('drop-target');
+        col.querySelector('.weekly-drop-hint')?.remove();
+
         const targetDay = parseInt(col.dataset.day, 10);
+        const rect      = col.getBoundingClientRect();
 
         if (_dragBlockId !== null) {
-            const ok = await updateBlock(_dragBlockId, { day_of_week: targetDay });
-            if (ok) _render();
+            const snapMins = _snapToGrid(e.clientY - rect.top);
+            let newStartM  = HOUR_START * 60 + snapMins;
+            let newEndM    = newStartM + _dragBlockDuration;
+
+            // Clamp so the block fits within the visible range
+            if (newEndM > HOUR_END * 60 + 59) {
+                newEndM   = HOUR_END * 60 + 59;
+                newStartM = newEndM - _dragBlockDuration;
+            }
+            if (newStartM < HOUR_START * 60) {
+                newStartM = HOUR_START * 60;
+                newEndM   = Math.min(newStartM + _dragBlockDuration, HOUR_END * 60 + 59);
+            }
+
+            const saved = await updateBlock(_dragBlockId, {
+                day_of_week: targetDay,
+                start_time:  _minsToTime(newStartM),
+                end_time:    _minsToTime(newEndM),
+            });
+            if (saved) _render();
         } else if (_dragTaskId !== null) {
-            openBlockModal(targetDay, _weekStartIso, () => _render(), _dragTaskId);
+            const snapMins = _snapToGrid(e.clientY - rect.top);
+            const startM   = Math.max(HOUR_START * 60, HOUR_START * 60 + snapMins);
+            const endM     = Math.min(startM + 60, HOUR_END * 60 + 59);
+
+            openBlockModal({
+                mode:              'create',
+                day:               targetDay,
+                weekStartIso:      _weekStartIso,
+                preselectedTaskId: _dragTaskId,
+                startTime:         _minsToTime(startM),
+                endTime:           _minsToTime(endM),
+            }, () => _render());
         }
-        _dragBlockId = null;
-        _dragTaskId  = null;
+        _dragBlockId       = null;
+        _dragTaskId        = null;
+        _dragBlockDuration = 0;
     });
+}
+
+// ── Resize ───────────────────────────────────────────────────────────────────
+
+function _setupResize() {
+    if (!_container) return;
+
+    let _resize        = null;
+    let _resizeDidMove = false;
+
+    // Absorb clicks on resize handles so they don't bubble to the edit action.
+    _container.addEventListener('click', e => {
+        if (e.target.closest('.weekly-block-resize')) e.stopPropagation();
+    });
+
+    _container.addEventListener('pointerdown', e => {
+        const handle = e.target.closest('.weekly-block-resize');
+        if (!handle) return;
+
+        e.stopPropagation();
+        e.preventDefault(); // prevent mousedown → dragstart chain
+
+        const blockEl = handle.closest('.weekly-block');
+        if (!blockEl) return;
+
+        const blockId = parseInt(blockEl.dataset.blockId, 10);
+        const block   = getBlocks().find(b => b.id === blockId);
+        if (!block) return;
+
+        const edge = handle.classList.contains('weekly-block-resize-top') ? 'top' : 'bottom';
+        handle.setPointerCapture(e.pointerId);
+        blockEl.draggable = false; // disable native drag while resizing
+
+        _resize = {
+            blockId,
+            edge,
+            startY:       e.clientY,
+            origStartMin: timeToMinutes(block.start_time),
+            origEndMin:   timeToMinutes(block.end_time),
+            blockEl,
+        };
+        _resizeDidMove = false;
+    });
+
+    window.addEventListener('pointermove', e => {
+        if (!_resize) return;
+        _resizeDidMove = true;
+
+        const { edge, startY, origStartMin, origEndMin, blockEl } = _resize;
+        const deltaY = e.clientY - startY;
+
+        if (edge === 'bottom') {
+            const snapped    = Math.round((origEndMin + deltaY / PX_PER_HOUR * 60) / SNAP_MINUTES) * SNAP_MINUTES;
+            const clampedEnd = Math.min(Math.max(snapped, origStartMin + SNAP_MINUTES), HOUR_END * 60 + 59);
+            blockEl.style.height = (clampedEnd - origStartMin) / 60 * PX_PER_HOUR + 'px';
+        } else {
+            const snapped      = Math.round((origStartMin + deltaY / PX_PER_HOUR * 60) / SNAP_MINUTES) * SNAP_MINUTES;
+            const clampedStart = Math.min(Math.max(snapped, HOUR_START * 60), origEndMin - SNAP_MINUTES);
+            blockEl.style.top    = (clampedStart - HOUR_START * 60) / 60 * PX_PER_HOUR + 'px';
+            blockEl.style.height = (origEndMin - clampedStart) / 60 * PX_PER_HOUR + 'px';
+        }
+    });
+
+    const _commitResize = async () => {
+        if (!_resize) return;
+        const { blockId, origStartMin, origEndMin, blockEl } = _resize;
+        _resize = null;
+        blockEl.draggable = true;
+
+        if (!_resizeDidMove) return;
+
+        // Suppress the click that fires after pointerup to prevent opening edit modal.
+        window.addEventListener('click', ev => ev.stopPropagation(), { once: true, capture: true });
+
+        const newTop    = parseFloat(blockEl.style.top);
+        const newHeight = parseFloat(blockEl.style.height);
+        const newStartM = Math.round(HOUR_START * 60 + newTop    / PX_PER_HOUR * 60);
+        const newEndM   = Math.round(newStartM        + newHeight / PX_PER_HOUR * 60);
+
+        const saved = await updateBlock(blockId, {
+            start_time: _minsToTime(newStartM),
+            end_time:   _minsToTime(newEndM),
+        });
+
+        if (!saved) {
+            // Revert DOM to the original position on PATCH failure.
+            blockEl.style.top    = (origStartMin - HOUR_START * 60) / 60 * PX_PER_HOUR + 'px';
+            blockEl.style.height = (origEndMin   - origStartMin)    / 60 * PX_PER_HOUR + 'px';
+        } else {
+            _render();
+        }
+    };
+
+    window.addEventListener('pointerup', _commitResize);
+
+    window.addEventListener('pointercancel', () => {
+        if (!_resize) return;
+        const { origStartMin, origEndMin, blockEl } = _resize;
+        _resize = null;
+        blockEl.draggable = true;
+        blockEl.style.top    = (origStartMin - HOUR_START * 60) / 60 * PX_PER_HOUR + 'px';
+        blockEl.style.height = (origEndMin   - origStartMin)    / 60 * PX_PER_HOUR + 'px';
+    });
+}
+
+// ── Drag & resize helpers ─────────────────────────────────────────────────────
+
+function _snapToGrid(offsetPx) {
+    return Math.round(offsetPx / PX_PER_HOUR * 60 / SNAP_MINUTES) * SNAP_MINUTES;
+}
+
+function _minsToTime(mins) {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function _updateDropHint(col, clientY) {
+    const rect      = col.getBoundingClientRect();
+    const snapMins  = _snapToGrid(clientY - rect.top);
+    const hintTopPx = snapMins / 60 * PX_PER_HOUR;
+
+    let hint = col.querySelector('.weekly-drop-hint');
+    if (!hint) {
+        hint = document.createElement('div');
+        hint.className = 'weekly-drop-hint';
+        col.appendChild(hint);
+    }
+    hint.style.top = hintTopPx + 'px';
+}
+
+// ── Week progress ─────────────────────────────────────────────────────────────
+
+function _renderWeekProgress(days) {
+    const now       = Date.now();
+    const weekStart = new Date(days[0]);               weekStart.setHours(0, 0, 0, 0);
+    const weekEnd   = new Date(days[days.length - 1]); weekEnd.setHours(23, 59, 59, 999);
+    // pct ∈ [0, 100]: fraction of the work week elapsed
+    const pct     = Math.min(100, Math.max(0,
+        ((now - weekStart.getTime()) / (weekEnd.getTime() - weekStart.getTime())) * 100
+    ));
+    const rounded = Math.round(pct);
+
+    const todayMs  = _today().getTime();
+    const todayDay = days.find(d => d.getTime() === todayMs);
+    const label    = todayDay ? DAY_NAMES[todayDay.getDay()]
+                   : pct >= 100 ? 'Completada' : 'Próxima';
+
+    return `
+        <div class="weekly-week-progress">
+            <span class="weekly-week-progress-label">${label} · ${rounded}%</span>
+            <div class="weekly-week-progress-bar">
+                <div class="weekly-week-progress-fill" style="width:${rounded}%"></div>
+            </div>
+        </div>`;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

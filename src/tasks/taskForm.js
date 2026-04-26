@@ -5,10 +5,34 @@ import { emitTimeLogChanged } from '../core/events.js';
 import { renderBoard } from '../board/render.js';
 import { generateId, formatTime, formatDate, isOverdue, formatTimeCompact, formatLogDate }  from '../shared/utils.js';
 import { CONFIG }      from '../core/config.js';
-import { openModal, closeModal } from '../shared/modal.js';
+import { openModal, closeModal, registerDirtyCheck } from '../shared/modal.js';
+import {
+    enableRetro, disableRetro,
+    getRetroValues, isRetroActive, validateRetro,
+} from './retroactiveAccordion.js';
 import { save }        from '../core/storage.js';
 
-let currentTab = 'edicion';
+let currentTab    = 'edicion';
+let _formSnapshot = null;
+
+function _getFormState() {
+    return {
+        name:        document.getElementById('inputTaskName')?.value ?? '',
+        description: document.getElementById('inputDescription')?.value ?? '',
+        startDate:   document.getElementById('inputStartDate')?.value ?? '',
+        deadline:    document.getElementById('inputDeadline')?.value ?? '',
+        priority:    document.getElementById('inputPriority')?.value ?? '',
+        subtasks:    [...document.querySelectorAll('.subtask-input')].map(s => s.value).join('\n'),
+        retroActive: isRetroActive(),
+    };
+}
+
+function _isTaskFormDirty() {
+    if (!_formSnapshot) return false;
+    return JSON.stringify(_getFormState()) !== JSON.stringify(_formSnapshot);
+}
+
+registerDirtyCheck('modalNewTask', _isTaskFormDirty);
 
 export function switchTab(tab) {
     currentTab = tab;
@@ -50,6 +74,8 @@ export function openNewTaskModal(type) {
     if (submitBtn) submitBtn.innerHTML = '<i class="fas fa-check"></i> Create';
     document.getElementById('modalNewTaskFooter').style.display = 'flex';
 
+    enableRetro();
+    _formSnapshot = _getFormState();
     openModal('modalNewTask');
 }
 
@@ -100,6 +126,8 @@ export async function openEditTaskModal(taskId) {
     renderResumenTab(task);
     renderTiempoTab(task);
 
+    disableRetro();
+    _formSnapshot = _getFormState();
     openModal('modalNewTask');
 
     // Hidratar time logs con IDs canónicos del backend (necesarios para edit/delete).
@@ -604,20 +632,39 @@ export async function submitNewTask() {
         return;
     }
 
+    // Validate retro accordion before submit
+    const retroErr = validateRetro();
+    if (retroErr) { alert(retroErr); return; }
+
+    const retro = getRetroValues();
+    const retroFields = retro.isActive ? {
+        isRetroactive: true,
+        completedAt:   retro.completedAt,
+        progress:      100,
+        timeLogs:      retro.timeLogs,
+    } : {};
+
+    const payload = {
+        title:        name,
+        description:  document.getElementById('inputDescription').value.trim(),
+        column:       retro.isActive
+            ? 'completed'
+            : (STATE.currentTaskType === 'activity' ? 'activities' : 'actively-working'),
+        type:         STATE.currentTaskType,
+        priority:     document.getElementById('inputPriority').value,
+        startDate:    document.getElementById('inputStartDate').value,
+        deadline:     document.getElementById('inputDeadline').value || null,
+        activityType: STATE.currentTaskType === 'activity'
+            ? document.getElementById('inputActivityType').value
+            : null,
+        subtasks,
+        ...retroFields,
+    };
+
+    console.log('PAYLOAD ENVIADO:', JSON.stringify(payload, null, 2));
+
     try {
-        await createTask({
-            title:        name,
-            description:  document.getElementById('inputDescription').value.trim(),
-            column:       STATE.currentTaskType === 'activity' ? 'activities' : 'actively-working',
-            type:         STATE.currentTaskType,
-            priority:     document.getElementById('inputPriority').value,
-            startDate:    document.getElementById('inputStartDate').value,
-            deadline:     document.getElementById('inputDeadline').value || null,
-            activityType: STATE.currentTaskType === 'activity'
-                ? document.getElementById('inputActivityType').value
-                : null,
-            subtasks,
-        });
+        await createTask(payload);
     } catch (err) {
         console.error('[submitNewTask] Error al crear tarea:', err);
         alert('Error al crear la tarea. Por favor intenta de nuevo.');

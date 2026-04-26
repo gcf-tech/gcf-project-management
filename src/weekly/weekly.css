@@ -28,9 +28,6 @@
     padding: 0.375rem 1.5rem;
     background: var(--color-surface);
     border-bottom: 1px solid var(--color-border);
-    position: sticky;
-    top: 0;
-    z-index: 20;
 }
 
 .weekly-indicator-card {
@@ -214,7 +211,7 @@
 .weekly-time-axis-spacer {
     height: var(--weekly-col-header-height, 40px);
     position: sticky;
-    top: var(--weekly-indicators-height, 90px);
+    top: 0;
     z-index: 8;
     background: var(--color-surface);
     border-bottom: 1px solid var(--color-border);
@@ -256,7 +253,7 @@
     border-bottom: 1px solid var(--color-border);
     background: var(--color-surface);
     position: sticky;
-    top: var(--weekly-indicators-height, 90px);
+    top: 0;
     z-index: 5;
 }
 .weekly-col-header.today {
@@ -452,6 +449,65 @@
     padding: 0;
 }
 .weekly-block:hover .weekly-block-remove { display: flex; }
+
+/* Resize handles */
+.weekly-block-resize {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 6px;
+    cursor: ns-resize;
+    z-index: 4;
+    display: none;
+}
+.weekly-block:hover .weekly-block-resize { display: block; }
+.weekly-block-resize-top    { top:    -3px; }
+.weekly-block-resize-bottom { bottom: -3px; }
+
+/* Drop-position hint line shown while dragging a block */
+.weekly-drop-hint {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--color-primary);
+    opacity: 0.6;
+    pointer-events: none;
+    z-index: 10;
+}
+
+/* ── Week progress bar ──────────────────────────────────────────────────── */
+
+.weekly-week-progress {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.25rem 1.5rem;
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.weekly-week-progress-label {
+    font-size: 0.6875rem;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.weekly-week-progress-bar {
+    flex: 1;
+    height: 4px;
+    background: var(--color-secondary-light);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.weekly-week-progress-fill {
+    height: 100%;
+    background: var(--color-primary);
+    border-radius: var(--radius-sm);
+    transition: width 0.3s ease;
+}
 
 /* ── Block modal ────────────────────────────────────────────────────────── */
 

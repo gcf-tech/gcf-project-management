@@ -6,9 +6,20 @@ import {
     evaluateUser, createSkill,
 } from '../dashboard/dashApi.js';
 import { escHtml as _esc, initials as _initials } from '../shared/utils.js';
+import { registerDirtyCheck } from '../shared/modal.js';
+
 let _currentUser      = null;
-let _currentContainer = null;       // reference for re-renders
+let _currentContainer = null;
 let _pendingEndorse   = null;
+
+function _isEndorseFormDirty() {
+    const modal   = document.getElementById('modalEndorse');
+    const score   = parseInt(modal?.querySelector('#endorseScore')?.value ?? '5', 10);
+    const comment = (modal?.querySelector('#endorseComment')?.value ?? '').trim();
+    return score !== 5 || comment !== '';
+}
+
+registerDirtyCheck('modalEndorse', _isEndorseFormDirty);
 
 const SKILL_CATEGORIES = ['Frontend', 'Backend', 'DevOps', 'Soft', 'Diseño', 'Data', 'Gestión', 'Otra'];
 

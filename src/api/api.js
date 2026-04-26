@@ -135,10 +135,16 @@ export async function createTask(data) {
             const payload = {
                 title:       newTask.title,
                 description: newTask.description ?? "",
-                type:        newTask.activityType ?? 'other',  // meeting/training/etc.
+                type:        newTask.activityType ?? 'other',
                 priority:    newTask.priority ?? 'medium',
                 startDate:   newTask.startDate ?? null,
                 deadline:    newTask.deadline ?? null,
+                ...(newTask.isRetroactive && {
+                    isRetroactive: true,
+                    completedAt:   newTask.completedAt,
+                    progress:      newTask.progress ?? 100,
+                    timeLogs:      newTask.timeLogs ?? [],
+                }),
             };
             const saved = await apiFetch('/activities', {
                 method: 'POST',
@@ -158,6 +164,12 @@ export async function createTask(data) {
                 startDate:    newTask.startDate ?? null,
                 deadline:     newTask.deadline ?? null,
                 subtasks:     newTask.subtasks ?? [],
+                ...(newTask.isRetroactive && {
+                    isRetroactive: true,
+                    completedAt:   newTask.completedAt,
+                    progress:      newTask.progress ?? 100,
+                    timeLogs:      newTask.timeLogs ?? [],
+                }),
             };
             const saved = await apiFetch('/tareas', {
                 method: 'POST',

@@ -8,7 +8,7 @@ import { renderBoard, toggleCompletedAccordion } from './board/render.js';
 import { setupDragAndDrop } from './board/dragDrop.js';
 import { initAuth }         from './auth/auth.js';
 import { CONFIG }           from './core/config.js';
-import { closeModal }       from './shared/modal.js';
+import { closeModal, closeModalSafe, hasDirtyCheck, isDirty } from './shared/modal.js';
 import { fetchTeams }       from './dashboard/dashApi.js';
 import { renderMyMetrics }  from './dashboard/myMetrics.js';
 import { renderTeamDashboard } from './dashboard/teamDashboard.js';
@@ -31,6 +31,7 @@ import {
 import { confirmCompletion } from './timer/completionModal.js';
 import { renderWeekly, handleWeeklyClick } from './weekly/weekly.js';
 import { submitBlock, handleWeeklyModalEvent } from './weekly/weekly-modal.js';
+import { initRetroAccordion } from './tasks/retroactiveAccordion.js';
 import { openSettings, closeSettings, saveSettings } from './settings/settings.js';
 
 import {
@@ -180,7 +181,7 @@ async function handleClick(e) {
         case 'weekly-submit-block': submitBlock(); break;
 
         // Modales
-        case 'close-modal':       closeModal(modalId); break;
+        case 'close-modal':       closeModalSafe(modalId); break;
 
         default:
             if (action?.startsWith('weekly-')) {
@@ -247,6 +248,7 @@ async function init() {
 
     await Promise.all(promises);
     
+    initRetroAccordion();
     restoreTimers();
     renderBoard();
     setupDragAndDrop();
@@ -269,14 +271,20 @@ async function init() {
 
     document.addEventListener('keydown', e => {
         if (e.key === 'Escape') {
-            document.querySelectorAll('.modal-overlay.active')
-                .forEach(m => m.classList.remove('active'));
+            document.querySelectorAll('.modal-overlay.active').forEach(m => {
+                // If dirty, ESC is disabled. If clean (or no dirty check), close normally.
+                if (!isDirty(m.id)) closeModal(m.id);
+            });
         }
     });
 
     document.querySelectorAll('.modal-overlay').forEach(overlay => {
         overlay.addEventListener('click', e => {
-            if (e.target === overlay) overlay.classList.remove('active');
+            // Backdrop click is fully disabled for creation/edit modals (those with a
+            // registered dirty check). Other modals (timer, completion) still close.
+            if (e.target === overlay && !hasDirtyCheck(overlay.id)) {
+                overlay.classList.remove('active');
+            }
         });
     });
 }
