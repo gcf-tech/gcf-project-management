@@ -55,26 +55,33 @@ export function handleCalendarClick(action, el) {
 function _renderContainer() {
     if (!_container) return;
 
-    const view   = getView();
+    const view    = getView();
     const refDate = getCalendarDate();
 
-    _container.innerHTML = `
-        <div class="calendar-shell">
-            ${_toolbar(view)}
-            <div class="calendar-view-host" id="calViewHost"></div>
-        </div>`;
+    if (view === 'week') {
+        _container.innerHTML = `
+            <div class="calendar-shell">
+                <div class="calendar-view-host" id="calViewHost"></div>
+            </div>`;
+        renderWeekView(_container.querySelector('#calViewHost'), _viewTabsHtml(view));
+    } else {
+        _container.innerHTML = `
+            <div class="calendar-shell">
+                ${_toolbar(view)}
+                <div class="calendar-view-host" id="calViewHost"></div>
+            </div>`;
+        _renderView(view, _container.querySelector('#calViewHost'), refDate);
+    }
+}
 
-    const host = _container.querySelector('#calViewHost');
-    _renderView(view, host, refDate);
+function _viewTabsHtml(activeView) {
+    return VIEWS.map(v =>
+        `<button class="cal-view-tab${v === activeView ? ' active' : ''}" data-action="calendar-set-view" data-view="${v}" aria-pressed="${v === activeView}">${VIEW_LABELS[v]}</button>`
+    ).join('');
 }
 
 function _toolbar(activeView) {
-    const tabs = VIEWS.map(v =>
-        `<button class="cal-view-tab${v === activeView ? ' active' : ''}" data-action="calendar-set-view" data-view="${v}">
-            ${VIEW_LABELS[v]}
-        </button>`
-    ).join('');
-    return `<div class="cal-view-toolbar">${tabs}</div>`;
+    return `<div class="cal-view-toolbar" role="toolbar" aria-label="Vista del calendario">${_viewTabsHtml(activeView)}</div>`;
 }
 
 function _renderView(view, host, refDate) {

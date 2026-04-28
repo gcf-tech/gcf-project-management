@@ -22,6 +22,7 @@ const MONTH_NAMES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct'
 
 let _refDate           = new Date();
 let _container         = null;
+let _toolbarHtml       = '';
 let _dragBlockId       = null;
 let _dragTaskId        = null;
 let _dragBlockDuration = 0;
@@ -31,8 +32,9 @@ let _weekStartIso      = null;
 // Public API
 // ---------------------------------------------------------------------------
 
-export function renderWeekly(container) {
-    _container = container;
+export function renderWeekly(container, toolbarHtml = '') {
+    _container   = container;
+    _toolbarHtml = toolbarHtml;
     _render();
 
     if (!container._weeklyInit) {
@@ -232,17 +234,24 @@ function _renderNav(days) {
         ? `${fmt(f)} – ${fmt(l)} ${l.getFullYear()}`
         : `${fmt(f)} ${f.getFullYear()} – ${fmt(l)} ${l.getFullYear()}`;
 
+    const viewsHtml = _toolbarHtml
+        ? `<div class="weekly-nav-views" role="toolbar" aria-label="Vista del calendario">${_toolbarHtml}</div>`
+        : '';
+
     return `
-        <div class="weekly-nav">
-            <button class="weekly-nav-btn" data-action="weekly-prev" title="Semana anterior">
-                <i class="fas fa-chevron-left"></i>
-            </button>
-            <span class="weekly-nav-range">${range}</span>
-            <button class="weekly-nav-btn" data-action="weekly-next" title="Semana siguiente">
-                <i class="fas fa-chevron-right"></i>
-            </button>
-            <button class="weekly-nav-btn weekly-nav-today" data-action="weekly-today">Hoy</button>
-        </div>`;
+        <nav class="weekly-nav" aria-label="Navegación semanal">
+            <div class="weekly-nav-date-group">
+                <button class="weekly-nav-btn" data-action="weekly-prev" aria-label="Semana anterior" title="Semana anterior">
+                    <i class="fas fa-chevron-left" aria-hidden="true"></i>
+                </button>
+                <span class="weekly-nav-range" aria-live="polite">${range}</span>
+                <button class="weekly-nav-btn" data-action="weekly-next" aria-label="Semana siguiente" title="Semana siguiente">
+                    <i class="fas fa-chevron-right" aria-hidden="true"></i>
+                </button>
+                <button class="weekly-nav-btn weekly-nav-today" data-action="weekly-today">Hoy</button>
+            </div>
+            ${viewsHtml}
+        </nav>`;
 }
 
 // ── Time axis ────────────────────────────────────────────────────────────────
