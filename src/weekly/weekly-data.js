@@ -9,8 +9,10 @@ const WEEKLY_API = `${CONFIG.BACKEND_BASE_URL}/api/weekly`;
 
 // Estado en memoria (última respuesta del backend).
 let _cachedPreferences = null;
-let _cachedBlocks      = [];
 let _currentWeekStart  = null;
+
+const _blocksCache = new Map(); // weekStartIso → { blocks: [], fetchedAt: number }
+const BLOCKS_CACHE_TTL_MS = 30_000;
 
 // ── HTTP helper ──────────────────────────────────────────────────────────────
 
@@ -72,10 +74,19 @@ export async function savePreferences(prefs) {
 // ── Blocks ───────────────────────────────────────────────────────────────────
 
 export async function fetchBlocks(weekStartIsoDate) {
+    const cached = _blocksCache.get(weekStartIsoDate);
+    if (cached && (Date.now() - cached.fetchedAt) < BLOCKS_CACHE_TTL_MS) {
+        _currentWeekStart = weekStartIsoDate;
+        return cached.blocks;
+    }
+
     _currentWeekStart = weekStartIsoDate;
     try {
         const list = await _apiFetch(`/blocks?week_start=${weekStartIsoDate}`);
-        if (!Array.isArray(list)) { _cachedBlocks = []; return _cachedBlocks; }
+        if (!Array.isArray(list)) {
+            _blocksCache.set(weekStartIsoDate, { blocks: [], fetchedAt: Date.now() });
+            return [];
+        }
 
         const normalized = list.map(_normalizeBlock);
 
@@ -88,16 +99,27 @@ export async function fetchBlocks(weekStartIsoDate) {
         const weekDays = getWeekDays(weekStartIsoDate, prefs);
         const virtual  = expandBlocks(masters, weekDays[0], weekDays[weekDays.length - 1]);
 
-        _cachedBlocks = [...concrete, ...virtual.map(_normalizeBlock)];
+        const result = [...concrete, ...virtual.map(_normalizeBlock)];
+        _blocksCache.set(weekStartIsoDate, { blocks: result, fetchedAt: Date.now() });
+        return result;
     } catch (e) {
         console.error('[weekly] fetchBlocks:', e);
-        _cachedBlocks = [];
+        _blocksCache.set(weekStartIsoDate, { blocks: [], fetchedAt: Date.now() });
+        return [];
     }
-    return _cachedBlocks;
 }
 
 export function getBlocks() {
-    return _cachedBlocks;
+    return _blocksCache.get(_currentWeekStart)?.blocks ?? [];
+}
+
+export function invalidateBlocksCache(weekStartIsoDate) {
+    _blocksCache.delete(weekStartIsoDate);
+}
+
+export function isBlocksCacheWarm(weekStartIsoDate) {
+    const cached = _blocksCache.get(weekStartIsoDate);
+    return !!(cached && (Date.now() - cached.fetchedAt) < BLOCKS_CACHE_TTL_MS);
 }
 
 export function getCurrentWeekStart() {
@@ -111,9 +133,8 @@ export async function createBlock(block) {
             body: JSON.stringify(block),
         });
         if (!saved) return null;
-        const norm = _normalizeBlock(saved);
-        _cachedBlocks.push(norm);
-        return norm;
+        _blocksCache.delete(_currentWeekStart);
+        return _normalizeBlock(saved);
     } catch (e) {
         console.error('[weekly] createBlock:', e);
         alert(`No se pudo crear el bloque: ${e.message}`);
@@ -129,10 +150,8 @@ export async function updateBlock(blockId, updates, scope = null) {
             body: JSON.stringify(body),
         });
         if (!saved) return null;
-        const norm = _normalizeBlock(saved);
-        const idx = _cachedBlocks.findIndex(b => b.id === blockId);
-        if (idx !== -1) _cachedBlocks[idx] = norm;
-        return norm;
+        _blocksCache.delete(_currentWeekStart);
+        return _normalizeBlock(saved);
     } catch (e) {
         console.error('[weekly] updateBlock:', e);
         alert(`No se pudo actualizar el bloque: ${e.message}`);
@@ -144,7 +163,7 @@ export async function removeBlock(blockId, scope = null) {
     try {
         const path = scope ? `/blocks/${blockId}?scope=${scope}` : `/blocks/${blockId}`;
         await _apiFetch(path, { method: 'DELETE' });
-        _cachedBlocks = _cachedBlocks.filter(b => b.id !== blockId);
+        _blocksCache.delete(_currentWeekStart);
         return true;
     } catch (e) {
         console.error('[weekly] removeBlock:', e);

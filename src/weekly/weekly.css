@@ -291,7 +291,22 @@
     pointer-events: none;
 }
 
-/* 7am–4pm availability zone */
+/* Business hours label (shown when user TZ ≠ NY) */
+.weekly-biz-hours-label {
+    padding: 0.1875rem 1.5rem;
+    font-size: 0.6875rem;
+    color: var(--color-text-secondary);
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.weekly-biz-hours-local {
+    font-weight: 500;
+    color: var(--color-text-primary);
+    margin-left: 0.25rem;
+}
+
+/* Business hours availability zone */
 .weekly-availability-zone {
     position: absolute;
     left: 0;
@@ -631,4 +646,21 @@
     .weekly-indicator-value     { font-size: 0.875rem; }
     .weekly-urgent-item         { font-size: 0.6875rem; }
     .weekly-col                 { min-width: 120px; }
+}
+
+/* ── Skeleton loader ────────────────────────────────────────────────────── */
+
+.weekly-block--skeleton {
+    background: var(--color-surface-2, #e5e7eb);
+    border-radius: 4px;
+    animation: weekly-skeleton-pulse 1.4s ease-in-out infinite;
+    position: absolute;
+    left: 4px;
+    right: 4px;
+    pointer-events: none;
+}
+
+@keyframes weekly-skeleton-pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: .45; }
 }

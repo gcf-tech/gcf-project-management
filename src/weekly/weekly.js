@@ -3,19 +3,18 @@
 import { STATE } from '../core/state.js';
 import {
     fetchPreferences, getPreferences,
-    fetchBlocks, getBlocks, updateBlock, removeBlock,
+    fetchBlocks, getBlocks, updateBlock, removeBlock, invalidateBlocksCache, isBlocksCacheWarm,
     getWeekDays, weekStartIso,
     timeToMinutes, blockDurationH, dayHours,
 } from './weekly-data.js';
 import { computeBlockLayout } from './weekly-layout.js';
 import { openBlockModal, askScope } from './weekly-modal.js';
 import { renderPeriodNav } from '../calendar/shared/period-nav.js';
+import { fetchBusinessHours, getBusinessHoursForDate, formatLocalHour } from './business-hours.js';
 
 const HOUR_START   = 6;
 const HOUR_END     = 23;
 const PX_PER_HOUR  = 60;
-const AVAIL_START  = 7;
-const AVAIL_END    = 16;
 const SNAP_MINUTES = 15;
 
 const DAY_NAMES   = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
@@ -28,6 +27,9 @@ let _dragBlockId       = null;
 let _dragTaskId        = null;
 let _dragBlockDuration = 0;
 let _weekStartIso      = null;
+let _prefsFetchedAt    = 0;
+
+const PREFS_CACHE_TTL_MS = 5 * 60_000;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -100,14 +102,34 @@ export function handleWeeklyClick(action, el) {
 async function _render() {
     if (!_container) return;
 
-    await fetchPreferences();
+    // Compute week boundaries with currently cached prefs (may update below)
+    const prefsNow     = getPreferences();
+    const daysEst      = getWeekDays(_refDate, prefsNow);
+    _weekStartIso      = weekStartIso(_refDate, prefsNow);
+
+    // Show skeleton immediately when there's no cached data for this week
+    if (!isBlocksCacheWarm(_weekStartIso)) {
+        _container.innerHTML = _renderSkeleton(daysEst);
+    }
+
+    const shouldRefetchPrefs = (Date.now() - _prefsFetchedAt) > PREFS_CACHE_TTL_MS;
+
+    const [, bizConfig] = await Promise.all([
+        shouldRefetchPrefs
+            ? fetchPreferences().then(() => { _prefsFetchedAt = Date.now(); })
+            : Promise.resolve(),
+        fetchBusinessHours(),
+        fetchBlocks(_weekStartIso),
+    ]);
+
+    // Recalculate with up-to-date prefs (week_start_day may have changed)
     const prefs = getPreferences();
     const days  = getWeekDays(_refDate, prefs);
     _weekStartIso = weekStartIso(_refDate, prefs);
 
-    await fetchBlocks(_weekStartIso);
     const blocks = getBlocks();
     const today  = _today();
+    const bizHours = getBusinessHoursForDate(bizConfig, _weekStartIso);
 
     _container.innerHTML = `
         <div class="weekly-view">
@@ -115,16 +137,49 @@ async function _render() {
             <div class="weekly-scroll">
                 ${_renderIndicators(days, blocks)}
                 ${_renderWeekProgress(days)}
+                ${_renderBusinessHoursLabel(bizHours)}
                 <div class="weekly-grid">
                     ${_renderTimeAxis()}
                     <div class="weekly-columns" id="weeklyColumns">
-                        ${days.map(d => _renderColumn(d, blocks, today)).join('')}
+                        ${days.map(d => _renderColumn(d, blocks, today, bizHours)).join('')}
                     </div>
                 </div>
             </div>
         </div>`;
 
     _updateStickyMetrics();
+}
+
+function _renderSkeleton(days) {
+    const prefs   = getPreferences();
+    const navDays = days ?? getWeekDays(_refDate, prefs);
+    const nav     = _renderNav(navDays);
+    const skeletonHeights = [60, 90, 45];
+    const skeletonTops    = [60, 180, 320];
+    const cols = navDays.map((d, i) => {
+        const dn      = d.getDay();
+        const blocks  = skeletonHeights.map((h, j) => `
+            <div class="weekly-block weekly-block--skeleton"
+                 style="top:${skeletonTops[j]}px;height:${h}px"></div>`).join('');
+        return `
+            <div class="weekly-col weekly-col--skeleton" data-day="${dn}">
+                <div class="weekly-col-header">
+                    <div class="weekly-col-day-name">${DAY_NAMES[dn]}</div>
+                    <div class="weekly-col-date">${d.getDate()} ${MONTH_NAMES[d.getMonth()]}</div>
+                </div>
+                <div class="weekly-col-body" data-day="${dn}">${blocks}</div>
+            </div>`;
+    }).join('');
+    return `
+        <div class="weekly-view">
+            ${nav}
+            <div class="weekly-scroll">
+                <div class="weekly-grid">
+                    ${_renderTimeAxis()}
+                    <div class="weekly-columns" id="weeklyColumns">${cols}</div>
+                </div>
+            </div>
+        </div>`;
 }
 
 // Mide el chrome fijo de la página (.header + .app-nav) y la altura real
@@ -255,7 +310,7 @@ function _renderTimeAxis() {
 
 // ── Day column ───────────────────────────────────────────────────────────────
 
-function _renderColumn(date, blocks, today) {
+function _renderColumn(date, blocks, today, bizHours) {
     const dn         = date.getDay();
     const isToday    = date.getTime() === today.getTime();
     const colBlocks  = blocks.filter(b => b.day === dn && _blockVisible(b));
@@ -270,8 +325,21 @@ function _renderColumn(date, blocks, today) {
         `<div class="weekly-hour-line" style="top:${i * PX_PER_HOUR}px"></div>`
     ).join('');
 
-    const availTop    = (AVAIL_START - HOUR_START) * PX_PER_HOUR;
-    const availHeight = (AVAIL_END   - AVAIL_START) * PX_PER_HOUR;
+    // Business hours zone — clamped to visible range; cross-midnight → show start→HOUR_END
+    let availZoneHtml = '';
+    if (bizHours) {
+        const { localStartHour, localEndHour } = bizHours;
+        const startH = Math.max(HOUR_START, Math.min(HOUR_END, localStartHour));
+        const endH   = localEndHour < localStartHour
+            ? HOUR_END
+            : Math.max(HOUR_START, Math.min(HOUR_END, localEndHour));
+        if (endH > startH) {
+            const availTop    = (startH - HOUR_START) * PX_PER_HOUR;
+            const availHeight = (endH   - startH)     * PX_PER_HOUR;
+            availZoneHtml = `<div class="weekly-availability-zone"
+                 style="top:${availTop}px;height:${availHeight}px"></div>`;
+        }
+    }
 
     return `
         <div class="weekly-col" data-day="${dn}">
@@ -284,8 +352,7 @@ function _renderColumn(date, blocks, today) {
                 </div>
             </div>
             <div class="weekly-col-body${hasBlocks ? '' : ' no-blocks'}" data-day="${dn}">
-                <div class="weekly-availability-zone"
-                     style="top:${availTop}px;height:${availHeight}px"></div>
+                ${availZoneHtml}
                 ${hourLines}
                 ${!hasBlocks ? '<div class="weekly-no-blocks-text"><i class="fas fa-calendar-plus"></i><br>Sin bloques planeados</div>' : ''}
                 ${colBlocks.map(b => _renderBlock(b, layout.get(b.id))).join('')}
@@ -296,6 +363,21 @@ function _renderColumn(date, blocks, today) {
                         data-day="${dn}"
                         title="Agregar bloque">+</button>
             </div>
+        </div>`;
+}
+
+// ── Business hours label ─────────────────────────────────────────────────────
+
+function _renderBusinessHoursLabel(bizHours) {
+    if (!bizHours) return '';
+    const { localStartHour, localEndHour, userTz, businessTz } = bizHours;
+    if (userTz === businessTz) return '';
+    const startFmt = formatLocalHour(localStartHour);
+    const endFmt   = formatLocalHour(localEndHour);
+    return `
+        <div class="weekly-biz-hours-label">
+            Horario laboral: 8am–5pm NY
+            <span class="weekly-biz-hours-local">(tu zona: ${startFmt}–${endFmt})</span>
         </div>`;
 }
 
