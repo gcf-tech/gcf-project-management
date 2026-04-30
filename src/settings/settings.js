@@ -1,6 +1,6 @@
 /** Panel lateral de configuración global. */
 
-import { fetchPreferences, savePreferences } from '../weekly/weekly-data.js';
+import { getPrefsOnce, getPreferences, savePreferences } from '../weekly/weekly-data.js';
 import { setViewSync } from '../calendar/calendar-state.js';
 
 export async function openSettings() {
@@ -24,7 +24,8 @@ export async function saveSettings() {
 }
 
 async function _loadIntoForm() {
-    const prefs = await fetchPreferences();
+    await getPrefsOnce();
+    const prefs = getPreferences();
     document.getElementById('settingWeekStart').value = prefs.week_start_day;
     document.getElementById('settingWeekEnd').value   = prefs.week_end_day;
     const viewEl = document.getElementById('settingCalendarView');

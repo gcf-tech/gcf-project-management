@@ -2,8 +2,9 @@
 
 import { STATE } from '../core/state.js';
 import {
-    fetchPreferences, getPreferences,
+    getPrefsOnce, getPreferences,
     fetchBlocks, getBlocks, updateBlock, removeBlock, invalidateBlocksCache, isBlocksCacheWarm,
+    getBlocksRefreshPromise,
     getWeekDays, weekStartIso,
     timeToMinutes, blockDurationH, dayHours,
 } from './weekly-data.js';
@@ -11,6 +12,9 @@ import { computeBlockLayout } from './weekly-layout.js';
 import { openBlockModal, askScope } from './weekly-modal.js';
 import { renderPeriodNav } from '../calendar/shared/period-nav.js';
 import { fetchBusinessHours, getBusinessHoursForDate, formatLocalHour } from './business-hours.js';
+import { fetchCalendarEvents, getCalendarEvents } from '../calendar/data/calendar-events-api.js';
+import { bucketEventsByDay, renderEventTrack } from './weekly-events-render.js';
+import { openEventModal, closeEventModal } from './weekly-event-modal.js';
 
 const HOUR_START   = 6;
 const HOUR_END     = 23;
@@ -27,9 +31,26 @@ let _dragBlockId       = null;
 let _dragTaskId        = null;
 let _dragBlockDuration = 0;
 let _weekStartIso      = null;
-let _prefsFetchedAt    = 0;
+let _gridHourStart     = HOUR_START; // derived each render from actual block data
 
-const PREFS_CACHE_TTL_MS = 5 * 60_000;
+// ── Resize gesture state (lifted to module scope, Fase 5 Antipatrón 4) ───────
+// Window-level pointer listeners must be attached only once per page load,
+// otherwise they accumulate every time the user re-enters the weekly view.
+// Lifting `_resize`/`_resizeDidMove` here lets the listeners share state
+// across renders without re-binding on each call to _setupResize().
+let _resize         = null;
+let _resizeDidMove  = false;
+let _windowListenersInit = false;
+
+// Last seen week boundaries — used by _onPreferencesUpdated to decide whether
+// the change actually invalidates the current week's block cache.
+let _lastWeekStartDay = null;
+let _lastWeekEndDay   = null;
+
+// Track whether the Weekly view has mounted at least once so we know when to
+// pass `prefetch: true` to the calendar events client. Subsequent navigations
+// (next week / prev week) reuse the existing prefetch, never re-trigger it.
+let _calendarPrefetchDone = false;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -38,20 +59,74 @@ const PREFS_CACHE_TTL_MS = 5 * 60_000;
 export function renderWeekly(container, toolbarHtml = '') {
     _container   = container;
     _toolbarHtml = toolbarHtml;
+
+    // Snapshot the active week boundaries the first time we render so the
+    // preferences-updated handler can tell what actually changed.
+    if (_lastWeekStartDay === null) {
+        const prefs = getPreferences();
+        _lastWeekStartDay = prefs.week_start_day;
+        _lastWeekEndDay   = prefs.week_end_day;
+    }
+
     _render();
 
+    // Container-scoped listeners — re-bind whenever the calendar router
+    // replaces innerHTML and gives us a fresh container element.
     if (!container._weeklyInit) {
         container._weeklyInit = true;
         _setupDragDrop();
         _setupResize();
         _setupDblClick();
-        window.addEventListener('preferences-updated', () => _render());
-        window.addEventListener('resize', _updateStickyMetrics);
     }
+
+    // Window-scoped listeners — bind ONCE per page load. The DOM-level guard
+    // (`container._weeklyInit`) doesn't survive an innerHTML replace, which is
+    // why the previous implementation leaked one listener per visit.
+    if (!_windowListenersInit) {
+        _windowListenersInit = true;
+        window.addEventListener('preferences-updated', _onPreferencesUpdated);
+        window.addEventListener('resize',              _updateStickyMetrics);
+        window.addEventListener('pointermove',         _onResizePointerMove);
+        window.addEventListener('pointerup',           _onResizePointerUp);
+        window.addEventListener('pointercancel',       _onResizePointerCancel);
+    }
+}
+
+// ── preferences-updated handler (Fase 5 Antipatrón 1) ────────────────────────
+
+function _onPreferencesUpdated(e) {
+    const newPrefs = (e?.detail && typeof e.detail === 'object') ? e.detail : getPreferences();
+    const wsd      = newPrefs.week_start_day;
+    const wed      = newPrefs.week_end_day;
+    const boundsChanged = (
+        wsd !== _lastWeekStartDay || wed !== _lastWeekEndDay
+    );
+    _lastWeekStartDay = wsd;
+    _lastWeekEndDay   = wed;
+    // If only non-structural prefs changed (e.g. calendar_view) the cached
+    // blocks for the current _weekStartIso are still valid — _render() will
+    // pick them up from the in-memory mirror without any /blocks request.
+    // If the bounds shifted, drop the entry so the next fetchBlocks falls
+    // back to the IDB → network path.
+    if (boundsChanged) invalidateBlocksCache(_weekStartIso);
+    _render();
 }
 
 export function handleWeeklyClick(action, el) {
     switch (action) {
+        case 'weekly-event-detail': {
+            // Read-only modal: find the event in the cache by id, render details.
+            const eventId = el.dataset.eventId;
+            const prefs   = getPreferences();
+            const days    = getWeekDays(_refDate, prefs);
+            const events  = getCalendarEvents(days[0], days[days.length - 1], 'week');
+            const event   = events.find(ev => ev.id === eventId);
+            if (event) openEventModal(event);
+            return true;
+        }
+        case 'weekly-event-close':
+            closeEventModal();
+            return true;
         case 'weekly-prev':
             _refDate.setDate(_refDate.getDate() - 7);
             _render();
@@ -91,6 +166,16 @@ export function handleWeeklyClick(action, el) {
             }
             return true;
         }
+        case 'weekly-open-log': {
+            const sourceRef  = el.dataset.sourceRef;
+            const sourceType = el.dataset.sourceType;
+            if (sourceRef) {
+                window.dispatchEvent(new CustomEvent('weekly:open-source-item', {
+                    detail: { id: sourceRef, sourceType },
+                }));
+            }
+            return true;
+        }
     }
     return false;
 }
@@ -102,6 +187,9 @@ export function handleWeeklyClick(action, el) {
 async function _render() {
     if (!_container) return;
 
+    // Performance instrumentation (Fase 0). Cheap, runs in prod.
+    performance.mark('weekly:render:start');
+
     // Compute week boundaries with currently cached prefs (may update below)
     const prefsNow     = getPreferences();
     const daysEst      = getWeekDays(_refDate, prefsNow);
@@ -112,15 +200,14 @@ async function _render() {
         _container.innerHTML = _renderSkeleton(daysEst);
     }
 
-    const shouldRefetchPrefs = (Date.now() - _prefsFetchedAt) > PREFS_CACHE_TTL_MS;
-
     const [, bizConfig] = await Promise.all([
-        shouldRefetchPrefs
-            ? fetchPreferences().then(() => { _prefsFetchedAt = Date.now(); })
-            : Promise.resolve(),
+        getPrefsOnce(),
         fetchBusinessHours(),
         fetchBlocks(_weekStartIso),
     ]);
+
+    performance.mark('weekly:prefs:done');
+    performance.mark('weekly:blocks:done');
 
     // Recalculate with up-to-date prefs (week_start_day may have changed)
     const prefs = getPreferences();
@@ -130,6 +217,19 @@ async function _render() {
     const blocks = getBlocks();
     const today  = _today();
     const bizHours = getBusinessHoursForDate(bizConfig, _weekStartIso);
+
+    // Calendar events: kick off the fetch before painting and use whatever
+    // is cached for the initial paint (SWR — cache hit returns instantly).
+    // Only the FIRST mount asks the backend to also prefetch the next week.
+    const rangeStart = days[0];
+    const rangeEnd   = days[days.length - 1];
+    const eventsPromise = fetchCalendarEvents(
+        rangeStart, rangeEnd, 'week',
+        { prefetch: !_calendarPrefetchDone },
+    );
+    _calendarPrefetchDone = true;
+    const cachedEvents  = getCalendarEvents(rangeStart, rangeEnd, 'week');
+    const eventsByDay   = bucketEventsByDay(cachedEvents, days);
 
     _container.innerHTML = `
         <div class="weekly-view">
@@ -141,13 +241,40 @@ async function _render() {
                 <div class="weekly-grid">
                     ${_renderTimeAxis()}
                     <div class="weekly-columns" id="weeklyColumns">
-                        ${days.map(d => _renderColumn(d, blocks, today, bizHours)).join('')}
+                        ${days.map(d => _renderColumn(d, blocks, today, bizHours, eventsByDay.get(d.getDay()) ?? [])).join('')}
                     </div>
                 </div>
             </div>
         </div>`;
 
+    // If the events fetch resolves with a different result than the cache
+    // hit we used for the initial paint, repaint quietly. We compare lengths
+    // as a cheap signal — exact diffing isn't worth it for this pane.
+    const myWeek = _weekStartIso;
+    eventsPromise
+        .then(({ events }) => {
+            if (_weekStartIso !== myWeek) return;             // user navigated away
+            if (events.length === cachedEvents.length) return; // nothing to repaint
+            _render();
+        })
+        .catch(() => {/* network failure shouldn't poison the UI */});
+
+    performance.mark('weekly:dom:done');
+    _logRenderPerf();
+
     _updateStickyMetrics();
+
+    // Fase 3 — show "actualizando…" while a SWR revalidation is in flight,
+    // and re-render once it resolves so the user sees fresh data.
+    _hookCacheBadge();
+
+    // Fase 3 — pre-warm IndexedDB for adjacent weeks during the idle window so
+    // navigation feels instantaneous. Fire-and-forget, never blocks paint.
+    if (typeof requestIdleCallback !== 'undefined') {
+        requestIdleCallback(() => _prefetchAdjacentWeeks(), { timeout: 2000 });
+    } else {
+        setTimeout(_prefetchAdjacentWeeks, 100);
+    }
 }
 
 function _renderSkeleton(days) {
@@ -156,7 +283,7 @@ function _renderSkeleton(days) {
     const nav     = _renderNav(navDays);
     const skeletonHeights = [60, 90, 45];
     const skeletonTops    = [60, 180, 320];
-    const cols = navDays.map((d, i) => {
+    const cols = navDays.map(d => {
         const dn      = d.getDay();
         const blocks  = skeletonHeights.map((h, j) => `
             <div class="weekly-block weekly-block--skeleton"
@@ -170,7 +297,7 @@ function _renderSkeleton(days) {
                 <div class="weekly-col-body" data-day="${dn}">${blocks}</div>
             </div>`;
     }).join('');
-    return `
+    const html = `
         <div class="weekly-view">
             ${nav}
             <div class="weekly-scroll">
@@ -180,6 +307,89 @@ function _renderSkeleton(days) {
                 </div>
             </div>
         </div>`;
+    performance.mark('weekly:skeleton:painted');
+    try {
+        performance.measure('weekly:time-to-skeleton', 'weekly:render:start', 'weekly:skeleton:painted');
+    } catch { /* mark missing → ignore */ }
+    return html;
+}
+
+// ── Performance instrumentation (Fase 0) ──────────────────────────────────────
+
+function _logRenderPerf() {
+    try {
+        performance.measure('weekly:time-to-prefs', 'weekly:render:start', 'weekly:prefs:done');
+        performance.measure('weekly:time-to-dom',   'weekly:prefs:done',   'weekly:dom:done');
+        performance.measure('weekly:total',         'weekly:render:start', 'weekly:dom:done');
+    } catch { /* missing marks → skip */ }
+
+    const last = name => {
+        const list = performance.getEntriesByName(name, 'measure');
+        const m    = list[list.length - 1];
+        return m ? +m.duration.toFixed(2) : null;
+    };
+    console.debug('[perf:weekly]', {
+        'time-to-skeleton': last('weekly:time-to-skeleton'),
+        'time-to-prefs':    last('weekly:time-to-prefs'),
+        'time-to-dom':      last('weekly:time-to-dom'),
+        'total':            last('weekly:total'),
+    });
+}
+
+// ── Cache "actualizando…" indicator (Fase 3) ──────────────────────────────────
+
+let _hookedRefresh = null;
+
+function _hookCacheBadge() {
+    const myWeek  = _weekStartIso;
+    const refresh = getBlocksRefreshPromise(myWeek);
+    if (!refresh) {
+        _setCacheIndicator(false);
+        return;
+    }
+    _setCacheIndicator(true);
+    if (_hookedRefresh === refresh) return;
+    _hookedRefresh = refresh;
+    refresh.finally(() => {
+        if (_hookedRefresh === refresh) _hookedRefresh = null;
+        // User may have navigated to a different week while we were waiting.
+        if (_weekStartIso !== myWeek) return;
+        _setCacheIndicator(false);
+        _render(); // repaint with fresh data (no flicker: same DOM if unchanged)
+    });
+}
+
+function _setCacheIndicator(show) {
+    if (!_container) return;
+    const existing = _container.querySelector('#weekly-cache-indicator');
+    if (show) {
+        if (existing) return;
+        const nav = _container.querySelector('.cal-period-nav');
+        if (!nav) return;
+        const badge = document.createElement('span');
+        badge.id          = 'weekly-cache-indicator';
+        badge.className   = 'weekly-cache-badge';
+        badge.textContent = 'actualizando…';
+        nav.appendChild(badge);
+    } else {
+        existing?.remove();
+    }
+}
+
+// ── Adjacent-week prefetch (Fase 3) ───────────────────────────────────────────
+
+function _prefetchAdjacentWeeks() {
+    const prefs = getPreferences();
+    if (!prefs) return;
+    const offsets = [-7, 7, 14];
+    for (const off of offsets) {
+        const ref = new Date(_refDate);
+        ref.setDate(ref.getDate() + off);
+        const iso = weekStartIso(ref, prefs);
+        if (isBlocksCacheWarm(iso)) continue;
+        // Fire-and-forget: fetchBlocks already handles IDB → mem → network.
+        fetchBlocks(iso).catch(() => {});
+    }
 }
 
 // Mide el chrome fijo de la página (.header + .app-nav) y la altura real
@@ -310,7 +520,7 @@ function _renderTimeAxis() {
 
 // ── Day column ───────────────────────────────────────────────────────────────
 
-function _renderColumn(date, blocks, today, bizHours) {
+function _renderColumn(date, blocks, today, bizHours, events = []) {
     const dn         = date.getDay();
     const isToday    = date.getTime() === today.getTime();
     const colBlocks  = blocks.filter(b => b.day === dn && _blockVisible(b));
@@ -341,6 +551,11 @@ function _renderColumn(date, blocks, today, bizHours) {
         }
     }
 
+    // Calendar events render in their own track on the left edge of the
+    // column body — visually distinct (dotted, faded) and read-only.
+    const eventTrackHtml = renderEventTrack(events, date);
+    const hasEventsClass = events.length > 0 ? ' has-events' : '';
+
     return `
         <div class="weekly-col" data-day="${dn}">
             <div class="weekly-col-header${isToday ? ' today' : ''}">
@@ -351,11 +566,14 @@ function _renderColumn(date, blocks, today, bizHours) {
                          title="${h.toFixed(1)}h / 8h"></div>
                 </div>
             </div>
-            <div class="weekly-col-body${hasBlocks ? '' : ' no-blocks'}" data-day="${dn}">
+            <div class="weekly-col-body${hasBlocks ? '' : ' no-blocks'}${hasEventsClass}" data-day="${dn}">
                 ${availZoneHtml}
                 ${hourLines}
+                ${eventTrackHtml}
                 ${!hasBlocks ? '<div class="weekly-no-blocks-text"><i class="fas fa-calendar-plus"></i><br>Sin bloques planeados</div>' : ''}
-                ${colBlocks.map(b => _renderBlock(b, layout.get(b.id))).join('')}
+                <div class="weekly-blocks-track" data-day="${dn}">
+                    ${colBlocks.map(b => _renderBlock(b, layout.get(b.id))).join('')}
+                </div>
             </div>
             <div class="weekly-col-footer">
                 <button class="weekly-add-btn"
@@ -383,7 +601,40 @@ function _renderBusinessHoursLabel(bizHours) {
 
 // ── Block ────────────────────────────────────────────────────────────────────
 
+function _renderLogBlock(block, blockLayout = { column: 0, totalColumns: 1 }) {
+    const { column, totalColumns } = blockLayout;
+    const top    = timeToMinutes(block.start_time) - HOUR_START * 60;
+    const height = Math.max(24, timeToMinutes(block.end_time) - timeToMinutes(block.start_time));
+    const durH   = blockDurationH(block);
+    const title  = block.title || 'Log';
+    const isTask = block.block_type === 'task';
+    const sourceRef  = isTask ? block.task_id : block.activity_id;
+    const sourceType = block.source ?? block.block_type;
+
+    const priorityCls = `priority-${block.priority ?? 'medium'}`;
+    const posStyle    = totalColumns === 1
+        ? 'left:4px;right:4px;'
+        : `left:calc(${(column / totalColumns * 100).toFixed(2)}% + 2px);width:calc(${(100 / totalColumns).toFixed(2)}% - 4px);right:auto;`;
+
+    return `
+        <div class="weekly-block weekly-block--log task-block ${priorityCls}"
+             style="top:${top}px;height:${height}px;${posStyle}"
+             data-action="weekly-open-log"
+             data-block-id="${block.id}"
+             data-source-ref="${_esc(sourceRef ?? '')}"
+             data-source-type="${_esc(sourceType)}"
+             title="Log de tiempo: ${_esc(title)}">
+            <div class="weekly-block-title">
+                <i class="fas fa-clock" style="font-size:.5625rem;margin-right:2px;opacity:.6"></i>${_esc(title)}
+            </div>
+            ${height >= 40
+                ? `<div class="weekly-block-time">${block.start_time}–${block.end_time} · ${durH}h</div>`
+                : ''}
+        </div>`;
+}
+
 function _renderBlock(block, blockLayout = { column: 0, totalColumns: 1 }) {
+    if (block.is_log) return _renderLogBlock(block, blockLayout);
     const { column, totalColumns } = blockLayout;
     const top        = timeToMinutes(block.start_time) - HOUR_START * 60;
     const height     = Math.max(24, timeToMinutes(block.end_time) - timeToMinutes(block.start_time));
@@ -562,9 +813,6 @@ function _setupDragDrop() {
 function _setupResize() {
     if (!_container) return;
 
-    let _resize        = null;
-    let _resizeDidMove = false;
-
     // Absorb clicks on resize handles so they don't bubble to the edit action.
     _container.addEventListener('click', e => {
         if (e.target.closest('.weekly-block-resize')) e.stopPropagation();
@@ -598,66 +846,68 @@ function _setupResize() {
         };
         _resizeDidMove = false;
     });
+}
 
-    window.addEventListener('pointermove', e => {
-        if (!_resize) return;
-        _resizeDidMove = true;
+// Window-level pointer handlers used by the resize gesture.
+// Defined as named module functions so renderWeekly() can attach them once
+// (Fase 5 Antipatrón 4) and they share state via the module-scoped `_resize`.
 
-        const { edge, startY, origStartMin, origEndMin, blockEl } = _resize;
-        const deltaY = e.clientY - startY;
+function _onResizePointerMove(e) {
+    if (!_resize) return;
+    _resizeDidMove = true;
 
-        if (edge === 'bottom') {
-            const snapped    = Math.round((origEndMin + deltaY / PX_PER_HOUR * 60) / SNAP_MINUTES) * SNAP_MINUTES;
-            const clampedEnd = Math.min(Math.max(snapped, origStartMin + SNAP_MINUTES), HOUR_END * 60 + 59);
-            blockEl.style.height = (clampedEnd - origStartMin) / 60 * PX_PER_HOUR + 'px';
-        } else {
-            const snapped      = Math.round((origStartMin + deltaY / PX_PER_HOUR * 60) / SNAP_MINUTES) * SNAP_MINUTES;
-            const clampedStart = Math.min(Math.max(snapped, HOUR_START * 60), origEndMin - SNAP_MINUTES);
-            blockEl.style.top    = (clampedStart - HOUR_START * 60) / 60 * PX_PER_HOUR + 'px';
-            blockEl.style.height = (origEndMin - clampedStart) / 60 * PX_PER_HOUR + 'px';
-        }
+    const { edge, startY, origStartMin, origEndMin, blockEl } = _resize;
+    const deltaY = e.clientY - startY;
+
+    if (edge === 'bottom') {
+        const snapped    = Math.round((origEndMin + deltaY / PX_PER_HOUR * 60) / SNAP_MINUTES) * SNAP_MINUTES;
+        const clampedEnd = Math.min(Math.max(snapped, origStartMin + SNAP_MINUTES), HOUR_END * 60 + 59);
+        blockEl.style.height = (clampedEnd - origStartMin) / 60 * PX_PER_HOUR + 'px';
+    } else {
+        const snapped      = Math.round((origStartMin + deltaY / PX_PER_HOUR * 60) / SNAP_MINUTES) * SNAP_MINUTES;
+        const clampedStart = Math.min(Math.max(snapped, HOUR_START * 60), origEndMin - SNAP_MINUTES);
+        blockEl.style.top    = (clampedStart - HOUR_START * 60) / 60 * PX_PER_HOUR + 'px';
+        blockEl.style.height = (origEndMin - clampedStart) / 60 * PX_PER_HOUR + 'px';
+    }
+}
+
+async function _onResizePointerUp() {
+    if (!_resize) return;
+    const { blockId, origStartMin, origEndMin, blockEl } = _resize;
+    _resize = null;
+    blockEl.draggable = true;
+
+    if (!_resizeDidMove) return;
+
+    // Suppress the click that fires after pointerup to prevent opening edit modal.
+    window.addEventListener('click', ev => ev.stopPropagation(), { once: true, capture: true });
+
+    const newTop    = parseFloat(blockEl.style.top);
+    const newHeight = parseFloat(blockEl.style.height);
+    const newStartM = Math.round(HOUR_START * 60 + newTop    / PX_PER_HOUR * 60);
+    const newEndM   = Math.round(newStartM        + newHeight / PX_PER_HOUR * 60);
+
+    const saved = await updateBlock(blockId, {
+        start_time: _minsToTime(newStartM),
+        end_time:   _minsToTime(newEndM),
     });
 
-    const _commitResize = async () => {
-        if (!_resize) return;
-        const { blockId, origStartMin, origEndMin, blockEl } = _resize;
-        _resize = null;
-        blockEl.draggable = true;
-
-        if (!_resizeDidMove) return;
-
-        // Suppress the click that fires after pointerup to prevent opening edit modal.
-        window.addEventListener('click', ev => ev.stopPropagation(), { once: true, capture: true });
-
-        const newTop    = parseFloat(blockEl.style.top);
-        const newHeight = parseFloat(blockEl.style.height);
-        const newStartM = Math.round(HOUR_START * 60 + newTop    / PX_PER_HOUR * 60);
-        const newEndM   = Math.round(newStartM        + newHeight / PX_PER_HOUR * 60);
-
-        const saved = await updateBlock(blockId, {
-            start_time: _minsToTime(newStartM),
-            end_time:   _minsToTime(newEndM),
-        });
-
-        if (!saved) {
-            // Revert DOM to the original position on PATCH failure.
-            blockEl.style.top    = (origStartMin - HOUR_START * 60) / 60 * PX_PER_HOUR + 'px';
-            blockEl.style.height = (origEndMin   - origStartMin)    / 60 * PX_PER_HOUR + 'px';
-        } else {
-            _render();
-        }
-    };
-
-    window.addEventListener('pointerup', _commitResize);
-
-    window.addEventListener('pointercancel', () => {
-        if (!_resize) return;
-        const { origStartMin, origEndMin, blockEl } = _resize;
-        _resize = null;
-        blockEl.draggable = true;
+    if (!saved) {
+        // Revert DOM to the original position on PATCH failure.
         blockEl.style.top    = (origStartMin - HOUR_START * 60) / 60 * PX_PER_HOUR + 'px';
         blockEl.style.height = (origEndMin   - origStartMin)    / 60 * PX_PER_HOUR + 'px';
-    });
+    } else {
+        _render();
+    }
+}
+
+function _onResizePointerCancel() {
+    if (!_resize) return;
+    const { origStartMin, origEndMin, blockEl } = _resize;
+    _resize = null;
+    blockEl.draggable = true;
+    blockEl.style.top    = (origStartMin - HOUR_START * 60) / 60 * PX_PER_HOUR + 'px';
+    blockEl.style.height = (origEndMin   - origStartMin)    / 60 * PX_PER_HOUR + 'px';
 }
 
 // ── Double-click to create ────────────────────────────────────────────────────
@@ -667,6 +917,9 @@ function _setupDblClick() {
     _container.addEventListener('dblclick', e => {
         // Let existing-block double-clicks fall through (single-click already edits)
         if (e.target.closest('.weekly-block')) return;
+        // Calendar events are read-only; never start a "create block" gesture
+        // from inside an event chip.
+        if (e.target.closest('.weekly-event')) return;
 
         const col = e.target.closest('.weekly-col-body');
         if (!col) return;
@@ -746,6 +999,7 @@ function _renderWeekProgress(days) {
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function _blockVisible(block) {
+    if (block.is_log) return true;  // pre-filtered by the /unified backend service
     // El backend ya filtra tareas completadas/eliminadas. En personales siempre visible.
     if (block.block_type === 'personal') return true;
 

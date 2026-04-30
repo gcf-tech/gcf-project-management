@@ -292,41 +292,59 @@
     margin-top: 0.5rem;
 }
 
+/* Contenedor del header del acordeón (div para poder anidar buttons) */
 .completed-accordion-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    width: 100%;
-    padding: 0.5rem 0.75rem;
+    gap: 0.25rem;
     border: 1px dashed var(--color-border);
     border-radius: var(--radius-md);
+    /* Sin overflow:hidden para no clipear el sort-menu-dropdown absoluto */
+    transition: border-color var(--transition-fast);
+}
+
+.completed-accordion-header:hover {
+    border-color: var(--color-primary);
+}
+
+/* Botón de toggle del acordeón */
+.completed-accordion-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex: 1;
+    padding: 0.5rem 0.75rem;
     background: transparent;
+    border: none;
     cursor: pointer;
     font-size: 0.8125rem;
     font-weight: 600;
     color: var(--color-text-secondary);
     transition: background var(--transition-fast), color var(--transition-fast);
     text-align: left;
+    min-width: 0;
+    border-radius: var(--radius-md) 0 0 var(--radius-md);
 }
 
-.completed-accordion-header:hover {
+.completed-accordion-toggle:hover {
     background: var(--color-secondary-light);
     color: var(--color-text-primary);
 }
 
-.completed-accordion-header span {
+.completed-accordion-toggle span {
     display: flex;
     align-items: center;
     gap: 0.4rem;
 }
 
-.completed-accordion-header span i {
+.completed-accordion-toggle span i {
     color: var(--color-success, #22c55e);
 }
 
 .completed-accordion-chevron {
     transition: transform var(--transition-fast);
     flex-shrink: 0;
+    margin-left: 0.5rem;
 }
 
 .completed-accordion.open .completed-accordion-chevron {

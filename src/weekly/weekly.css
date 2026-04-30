@@ -436,6 +436,17 @@
 .weekly-block-resize-top    { top:    -3px; }
 .weekly-block-resize-bottom { bottom: -3px; }
 
+/* Log block — read-only time-log entry from task/activity timer */
+.weekly-block.weekly-block--log {
+    cursor: pointer;
+    opacity: 0.7;
+    border-style: dashed;
+    border-left-style: solid;
+}
+.weekly-block.weekly-block--log:hover { opacity: 0.95; }
+.weekly-block.weekly-block--log .weekly-block-remove,
+.weekly-block.weekly-block--log .weekly-block-resize { display: none !important; }
+
 /* Drop-position hint line shown while dragging a block */
 .weekly-drop-hint {
     position: absolute;
@@ -663,4 +674,144 @@
 @keyframes weekly-skeleton-pulse {
     0%, 100% { opacity: 1; }
     50%       { opacity: .45; }
+}
+
+/* ── Cache "actualizando…" indicator (Fase 3) ─────────────────────────────── */
+
+.weekly-view .cal-period-nav { position: relative; }
+
+.weekly-cache-badge {
+    position: absolute;
+    top: 4px;
+    right: 8px;
+    font-size: 0.6875rem;
+    color: var(--color-text-secondary);
+    opacity: 0.6;
+    pointer-events: none;
+    font-style: italic;
+    user-select: none;
+}
+
+/* ── Calendar events (Nextcloud) ─────────────────────────────────────────── */
+
+:root {
+    --cal-event-color: #6366f1;
+}
+
+/* The track sits absolutely on the left edge of the column body, above
+   the hour grid and availability zones but below the user's blocks. The
+   track itself is transparent — only its child chips draw. */
+.weekly-event-track {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 32px;
+    pointer-events: none;
+    z-index: 2;
+}
+
+.weekly-event {
+    position: absolute;
+    left: 2px;
+    right: 2px;
+    pointer-events: auto;
+    border: 1.5px dashed var(--cal-event-color);
+    background: color-mix(in srgb, var(--cal-event-color) 10%, transparent);
+    color: var(--cal-event-color);
+    border-radius: 4px;
+    padding: 2px 3px;
+    font-size: 0.625rem;
+    line-height: 1.1;
+    overflow: hidden;
+    cursor: pointer;
+    opacity: 0.85;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    user-select: none;
+}
+
+.weekly-event:hover,
+.weekly-event:focus-visible {
+    opacity: 1;
+    transform: translateX(1px);
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--cal-event-color) 30%, transparent);
+}
+
+.weekly-event-icon {
+    font-size: 0.625rem;
+    flex: 0 0 auto;
+}
+
+.weekly-event-title {
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    width: 100%;
+}
+
+.weekly-event--allday {
+    background: repeating-linear-gradient(
+        45deg,
+        color-mix(in srgb, var(--cal-event-color) 10%, transparent),
+        color-mix(in srgb, var(--cal-event-color) 10%, transparent) 4px,
+        color-mix(in srgb, var(--cal-event-color) 18%, transparent) 4px,
+        color-mix(in srgb, var(--cal-event-color) 18%, transparent) 8px
+    );
+}
+
+/* `.weekly-blocks-track` is a positioning context for the user's blocks.
+   Without events it fills the column body; with events it leaves a 32px
+   strip on the left for the event track. The blocks themselves keep their
+   percentage-based left/width math unchanged. */
+.weekly-blocks-track {
+    position: absolute;
+    inset: 0;
+}
+
+.weekly-col-body.has-events .weekly-blocks-track {
+    left: 32px;
+}
+
+/* ── Calendar event detail modal ─────────────────────────────────────────── */
+
+.cal-event-modal .modal-content {
+    max-width: 480px;
+    border-left: 4px solid var(--cal-event-color);
+}
+
+.cal-event-when {
+    color: var(--color-text-secondary);
+    font-size: 0.875rem;
+    margin: 0.25rem 0 1rem;
+}
+
+.cal-event-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    margin: 0.5rem 0;
+    color: var(--color-text);
+    font-size: 0.875rem;
+}
+
+.cal-event-row[hidden] { display: none; }
+
+.cal-event-row i {
+    color: var(--color-text-secondary);
+    min-width: 16px;
+    margin-top: 2px;
+}
+
+.cal-event-description {
+    white-space: pre-wrap;
+}
+
+.cal-event-actions {
+    margin-top: 1rem;
+    display: flex;
+    justify-content: flex-end;
 }

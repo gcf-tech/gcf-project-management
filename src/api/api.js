@@ -257,7 +257,8 @@ export async function updateColumn(taskId, column) {
 
 export async function completeTask(taskId) {
     const isAct = _isActivity(taskId);
-    let savedColumn = isAct ? 'activities' : 'completed';
+    let savedColumn      = isAct ? 'activities' : 'completed';
+    let savedCompletedAt = null;
 
     if (CONFIG.BACKEND_URL) {
         if (isAct) {
@@ -265,10 +266,12 @@ export async function completeTask(taskId) {
                 method: 'PATCH',
                 body: JSON.stringify({ progress: 100 }),
             });
-            if (saved?.activity?.column) savedColumn = saved.activity.column;
+            if (saved?.activity?.column)      savedColumn      = saved.activity.column;
+            if (saved?.activity?.completedAt) savedCompletedAt = saved.activity.completedAt;
         } else {
             const saved = await apiFetch(`/tareas/${taskId}/finalizar`, { method: 'POST' });
-            if (saved?.task?.column) savedColumn = saved.task.column;
+            if (saved?.task?.column)      savedColumn      = saved.task.column;
+            if (saved?.task?.completedAt) savedCompletedAt = saved.task.completedAt;
         }
     }
 
@@ -277,6 +280,10 @@ export async function completeTask(taskId) {
         task.progress = 100;
         task.subtasks.forEach(s => (s.completed = true));
         task.column = savedColumn;
+        // Registrar timestamp de completado para el sort por "Completado"
+        if (!task.completedAt) {
+            task.completedAt = savedCompletedAt ?? new Date().toISOString();
+        }
     }
     save();
 }

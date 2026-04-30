@@ -95,3 +95,6 @@ export const removeTeamMember = (teamId, userId) =>
 
 export const setUserRole = (userId, role) =>
     apiFetch(`/api/admin/users/${userId}/set-role?role=${encodeURIComponent(role)}`, { method: 'POST' });
+
+export const syncUserFromNC = (userId) =>
+    apiFetch(`/api/admin/users/${userId}/sync-nc`, { method: 'POST' });

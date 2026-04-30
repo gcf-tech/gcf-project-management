@@ -2,6 +2,7 @@
 
 import { startOfMonth, endOfMonth, addMonths } from 'date-fns';
 import { fetchAggregate, buildAggMap } from '../data/aggregate-api.js';
+import { maybePrefetchOnFirstMount } from '../data/calendar-events-api.js';
 import { renderMiniMonth, renderMiniMonthSkeleton } from '../shared/mini-calendar.js';
 import { renderPeriodNav } from '../shared/period-nav.js';
 
@@ -47,6 +48,7 @@ function _renderSkeleton() {
 async function _loadAndRender() {
     const ss  = _semesterStart(_date);
     const end = endOfMonth(addMonths(ss, 5));
+    maybePrefetchOnFirstMount('semester', startOfMonth(ss), end);
     const entries = await fetchAggregate(startOfMonth(ss), end);
     const aggMap  = buildAggMap(entries);
 

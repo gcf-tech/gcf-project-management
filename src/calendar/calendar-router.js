@@ -4,7 +4,7 @@
  */
 
 import { getView, setViewSync, getCalendarDate, navigateNext, navigatePrev, navigateToday, initFromPrefs, VIEWS } from './calendar-state.js';
-import { fetchPreferences, getPreferences }  from '../weekly/weekly-data.js';
+import { getPrefsOnce, getPreferences }  from '../weekly/weekly-data.js';
 
 import { renderWeekView, handleWeeklyClick } from './views/week-view.js';
 import { renderDayView, navigateDayNext, navigateDayPrev, navigateDayToday }             from './views/day-view.js';
@@ -19,13 +19,31 @@ let _container = null;
 // Public
 // ---------------------------------------------------------------------------
 
-export async function renderCalendar(container) {
+/**
+ * Render the calendar view inside `container`.
+ *
+ * @param {HTMLElement} container
+ * @param {object}  [opts]
+ * @param {boolean} [opts.prefetch=false] When true, the caller has already
+ *        primed the in-memory preferences cache via primePrefsCache(), so we
+ *        can render synchronously from cache and let getPrefsOnce() resolve in
+ *        the background without blocking the first paint.
+ */
+export async function renderCalendar(container, opts = {}) {
     _container = container;
 
-    await fetchPreferences();
     const prefs = getPreferences();
-    initFromPrefs(prefs);
+    if (opts.prefetch && prefs?.calendar_view) {
+        // Cache primed in app bootstrap → render immediately, revalidate prefs
+        // asynchronously without blocking the first paint.
+        initFromPrefs(prefs);
+        _renderContainer();
+        getPrefsOnce().catch(() => {});
+        return;
+    }
 
+    await getPrefsOnce();
+    initFromPrefs(getPreferences());
     _renderContainer();
 }
 

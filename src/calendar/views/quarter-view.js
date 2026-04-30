@@ -2,6 +2,7 @@
 
 import { startOfMonth, endOfMonth, addMonths } from 'date-fns';
 import { fetchAggregate, buildAggMap } from '../data/aggregate-api.js';
+import { maybePrefetchOnFirstMount } from '../data/calendar-events-api.js';
 import { renderMiniMonth, renderMiniMonthSkeleton } from '../shared/mini-calendar.js';
 import { renderPeriodNav } from '../shared/period-nav.js';
 
@@ -47,6 +48,7 @@ function _renderSkeleton() {
 async function _loadAndRender() {
     const qs  = _quarterStart(_date);
     const end = endOfMonth(addMonths(qs, 2));
+    maybePrefetchOnFirstMount('quarter', startOfMonth(qs), end);
     const entries = await fetchAggregate(startOfMonth(qs), end);
     const aggMap  = buildAggMap(entries);
 

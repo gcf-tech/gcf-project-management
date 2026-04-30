@@ -3,7 +3,8 @@
 import { startOfDay, getDay, subDays, addDays, format } from 'date-fns';
 import { expandBlocks } from '../calendar/recurrence/rrule-expander.js';
 import { CONFIG } from '../core/config.js';
-import { getToken, logout } from '../auth/auth.js';
+import { getToken, logout, getCachedUser } from '../auth/auth.js';
+import { pcGet, pcSet, pcDelete } from '../core/persistent-cache.js';
 
 const WEEKLY_API = `${CONFIG.BACKEND_BASE_URL}/api/weekly`;
 
@@ -11,8 +12,20 @@ const WEEKLY_API = `${CONFIG.BACKEND_BASE_URL}/api/weekly`;
 let _cachedPreferences = null;
 let _currentWeekStart  = null;
 
-const _blocksCache = new Map(); // weekStartIso → { blocks: [], fetchedAt: number }
-const BLOCKS_CACHE_TTL_MS = 30_000;
+// In-memory mirror of the IndexedDB cache so synchronous helpers like
+// `getBlocks()` and `isBlocksCacheWarm()` keep working without async access.
+const _memBlocks = new Map(); // weekStartIso → { blocks: [], fetchedAt: number }
+
+const BLOCKS_FRESH_MS = 30_000;          // beyond this we revalidate in the background
+const BLOCKS_TTL_MS   = 30_000;          // IDB lifetime (matches existing behaviour)
+const PREFS_TTL_MS    = 5 * 60_000;      // 5 min — same as PREFS_CACHE_TTL_MS in weekly.js
+
+// Dedup of in-flight network revalidations (one per week).
+const _inFlightBlocks = new Map();
+let   _inFlightPrefs  = null;
+
+// Session-scoped singleton promise for fetchPreferences (see getPrefsOnce).
+let _prefsPromise = null;
 
 // ── HTTP helper ──────────────────────────────────────────────────────────────
 
@@ -41,16 +54,60 @@ async function _apiFetch(path, options = {}) {
     return text ? JSON.parse(text) : {};
 }
 
+// ── Cache key helpers ────────────────────────────────────────────────────────
+
+function _userId() {
+    try {
+        const u = getCachedUser?.();
+        return u?.id ?? 'anon';
+    } catch { return 'anon'; }
+}
+
+function _blocksKey(weekIso) { return `weekly:blocks:${_userId()}:${weekIso}`; }
+function _prefsKey()         { return `weekly:prefs:${_userId()}`; }
+
 // ── Preferences ──────────────────────────────────────────────────────────────
 
+async function _fetchPrefsFromNetwork() {
+    if (_inFlightPrefs) return _inFlightPrefs;
+    _inFlightPrefs = (async () => {
+        try {
+            const p = await _apiFetch('/preferences');
+            if (p) {
+                _cachedPreferences = p;
+                pcSet(_prefsKey(), p, PREFS_TTL_MS).catch(() => {});
+            }
+        } catch (e) {
+            console.error('[weekly] fetchPreferences:', e);
+        } finally {
+            _inFlightPrefs = null;
+        }
+        return _cachedPreferences ?? { week_start_day: 1, week_end_day: 5 };
+    })();
+    return _inFlightPrefs;
+}
+
 export async function fetchPreferences() {
-    try {
-        const p = await _apiFetch('/preferences');
-        if (p) _cachedPreferences = p;
-    } catch (e) {
-        console.error('[weekly] fetchPreferences:', e);
+    if (_cachedPreferences) return _cachedPreferences;
+
+    const idbHit = await pcGet(_prefsKey());
+    if (idbHit) {
+        _cachedPreferences = idbHit;
+        _fetchPrefsFromNetwork().catch(() => {}); // SWR
+        return idbHit;
     }
-    return _cachedPreferences ?? { week_start_day: 1, week_end_day: 5 };
+
+    return await _fetchPrefsFromNetwork();
+}
+
+/**
+ * Session-scoped singleton: ensures fetchPreferences() runs at most once per
+ * page load even when invoked from multiple call sites (calendar-router,
+ * weekly view, etc). Subsequent calls reuse the resolved promise instantly.
+ */
+export function getPrefsOnce() {
+    if (!_prefsPromise) _prefsPromise = fetchPreferences();
+    return _prefsPromise;
 }
 
 export function getPreferences() {
@@ -63,7 +120,13 @@ export async function savePreferences(prefs) {
             method: 'PUT',
             body: JSON.stringify(prefs),
         });
-        if (saved) _cachedPreferences = saved;
+        if (saved) {
+            _cachedPreferences = saved;
+            // Reset session singleton so future getPrefsOnce calls reflect the
+            // fresh value (the resolved promise above still holds the old one).
+            _prefsPromise = Promise.resolve(saved);
+            pcSet(_prefsKey(), saved, PREFS_TTL_MS).catch(() => {});
+        }
         window.dispatchEvent(new CustomEvent('preferences-updated', { detail: _cachedPreferences }));
     } catch (e) {
         console.error('[weekly] savePreferences:', e);
@@ -73,57 +136,140 @@ export async function savePreferences(prefs) {
 
 // ── Blocks ───────────────────────────────────────────────────────────────────
 
-export async function fetchBlocks(weekStartIsoDate) {
-    const cached = _blocksCache.get(weekStartIsoDate);
-    if (cached && (Date.now() - cached.fetchedAt) < BLOCKS_CACHE_TTL_MS) {
-        _currentWeekStart = weekStartIsoDate;
-        return cached.blocks;
-    }
+async function _fetchBlocksFromNetwork(weekStartIsoDate) {
+    // Fetch manual/recurrence blocks and time-log entries in parallel.
+    const [list, unifiedList] = await Promise.all([
+        _apiFetch(`/blocks?week_start=${weekStartIsoDate}`),
+        _apiFetch(`/unified?week_start=${weekStartIsoDate}`).catch(() => []),
+    ]);
+    if (!Array.isArray(list)) return [];
 
-    _currentWeekStart = weekStartIsoDate;
-    try {
-        const list = await _apiFetch(`/blocks?week_start=${weekStartIsoDate}`);
-        if (!Array.isArray(list)) {
-            _blocksCache.set(weekStartIsoDate, { blocks: [], fetchedAt: Date.now() });
-            return [];
+    const normalized = list.map(_normalizeBlock);
+
+    // Split master rrule blocks (template only) from concrete/virtual blocks
+    const masters  = normalized.filter(b => b.is_master && b.rrule_string);
+    const concrete = normalized.filter(b => !b.is_master);
+
+    // Expand masters client-side for the displayed week.
+    // Parse weekStartIsoDate as LOCAL midnight (not UTC) to avoid a one-day
+    // shift in UTC-N timezones where new Date("YYYY-MM-DD") → UTC midnight.
+    const prefs    = getPreferences();
+    const [_y, _m, _d] = weekStartIsoDate.split('-').map(Number);
+    const weekDays = getWeekDays(new Date(_y, _m - 1, _d), prefs);
+    const virtual  = expandBlocks(masters, weekDays[0], weekDays[weekDays.length - 1]);
+
+    // Merge time-log blocks from /unified (source=task|activity only;
+    // source=manual would duplicate what /blocks already returns).
+    const logBlocks = Array.isArray(unifiedList)
+        ? unifiedList
+            .filter(b => b.source === 'task' || b.source === 'activity')
+            .map(_normalizeLogBlock)
+        : [];
+
+    // DEBUG — remove before merge (enable with ?debug=weekly in URL)
+    if (_debugWeekly()) {
+        console.log('[weekly-data] fetchBlocks incoming:', list.length, '| masters:', masters.length, '| concrete:', concrete.length, '| virtual:', virtual.length, '| logs:', logBlocks.length);
+        if (masters.length > 0) console.log('[weekly-data]   first master to expand:', JSON.stringify(masters[0]));
+        if (virtual.length > 0) {
+            const v = virtual[0];
+            console.log('[weekly-data]   first virtual generated:', { id: v.id, day: v.day, start_time: v.start_time, week_start: v.week_start });
         }
-
-        const normalized = list.map(_normalizeBlock);
-
-        // Split master rrule blocks (template only) from concrete/virtual blocks
-        const masters  = normalized.filter(b => b.is_master && b.rrule_string);
-        const concrete = normalized.filter(b => !b.is_master);
-
-        // Expand masters client-side for the displayed week
-        const prefs    = getPreferences();
-        const weekDays = getWeekDays(weekStartIsoDate, prefs);
-        const virtual  = expandBlocks(masters, weekDays[0], weekDays[weekDays.length - 1]);
-
-        const result = [...concrete, ...virtual.map(_normalizeBlock)];
-        _blocksCache.set(weekStartIsoDate, { blocks: result, fetchedAt: Date.now() });
-        return result;
-    } catch (e) {
-        console.error('[weekly] fetchBlocks:', e);
-        _blocksCache.set(weekStartIsoDate, { blocks: [], fetchedAt: Date.now() });
-        return [];
     }
+
+    return [...concrete, ...virtual.map(_normalizeBlock), ...logBlocks];
+}
+
+function _refreshBlocks(weekStartIsoDate) {
+    if (_inFlightBlocks.has(weekStartIsoDate)) {
+        return _inFlightBlocks.get(weekStartIsoDate);
+    }
+    const p = (async () => {
+        try {
+            const result = await _fetchBlocksFromNetwork(weekStartIsoDate);
+            const entry  = { blocks: result, fetchedAt: Date.now() };
+            _memBlocks.set(weekStartIsoDate, entry);
+            pcSet(_blocksKey(weekStartIsoDate), entry, BLOCKS_TTL_MS).catch(() => {});
+            return result;
+        } catch (e) {
+            console.error('[weekly] fetchBlocks:', e);
+            const entry = { blocks: [], fetchedAt: Date.now() };
+            _memBlocks.set(weekStartIsoDate, entry);
+            return [];
+        } finally {
+            _inFlightBlocks.delete(weekStartIsoDate);
+        }
+    })();
+    _inFlightBlocks.set(weekStartIsoDate, p);
+    return p;
+}
+
+export async function fetchBlocks(weekStartIsoDate) {
+    _currentWeekStart = weekStartIsoDate;
+
+    // 1) In-memory mirror (same session, possibly stale → SWR)
+    const mem = _memBlocks.get(weekStartIsoDate);
+    if (mem) {
+        if ((Date.now() - mem.fetchedAt) >= BLOCKS_FRESH_MS) {
+            _refreshBlocks(weekStartIsoDate).catch(() => {});
+        }
+        return mem.blocks;
+    }
+
+    // 2) IndexedDB (cross-session warm load) — return cached, revalidate in bg
+    const idbHit = await pcGet(_blocksKey(weekStartIsoDate));
+    if (idbHit?.blocks) {
+        _memBlocks.set(weekStartIsoDate, idbHit);
+        _refreshBlocks(weekStartIsoDate).catch(() => {});
+        return idbHit.blocks;
+    }
+
+    // 3) Cold — block on the network
+    return await _refreshBlocks(weekStartIsoDate);
 }
 
 export function getBlocks() {
-    return _blocksCache.get(_currentWeekStart)?.blocks ?? [];
+    return _memBlocks.get(_currentWeekStart)?.blocks ?? [];
 }
 
 export function invalidateBlocksCache(weekStartIsoDate) {
-    _blocksCache.delete(weekStartIsoDate);
+    _memBlocks.delete(weekStartIsoDate);
+    pcDelete(_blocksKey(weekStartIsoDate)).catch(() => {});
 }
 
 export function isBlocksCacheWarm(weekStartIsoDate) {
-    const cached = _blocksCache.get(weekStartIsoDate);
-    return !!(cached && (Date.now() - cached.fetchedAt) < BLOCKS_CACHE_TTL_MS);
+    const cached = _memBlocks.get(weekStartIsoDate);
+    return !!(cached && (Date.now() - cached.fetchedAt) < BLOCKS_FRESH_MS);
 }
 
 export function getCurrentWeekStart() {
     return _currentWeekStart;
+}
+
+/** Returns the in-flight background refresh promise for `weekIso`, or null. */
+export function getBlocksRefreshPromise(weekIso) {
+    return _inFlightBlocks.get(weekIso) ?? null;
+}
+
+/**
+ * Pre-load the in-memory preferences cache from a value already read from
+ * IndexedDB elsewhere (e.g. app bootstrap). Avoids a redundant IDB roundtrip
+ * when the caller already has the data in hand.
+ */
+export function primePrefsCache(prefs) {
+    if (!prefs || typeof prefs !== 'object') return;
+    _cachedPreferences = prefs;
+    if (!_prefsPromise) _prefsPromise = Promise.resolve(prefs);
+}
+
+/**
+ * Pre-load the in-memory blocks mirror with an entry already read from IDB.
+ * The entry shape must be `{ blocks, fetchedAt }`. Sets `_currentWeekStart`
+ * so `getBlocks()` returns this entry immediately.
+ */
+export function primeBlocksCache(weekIso, entry) {
+    if (!weekIso || !entry || !Array.isArray(entry.blocks)) return;
+    _memBlocks.set(weekIso, entry);
+    _currentWeekStart = weekIso;
 }
 
 export async function createBlock(block) {
@@ -133,7 +279,7 @@ export async function createBlock(block) {
             body: JSON.stringify(block),
         });
         if (!saved) return null;
-        _blocksCache.delete(_currentWeekStart);
+        invalidateBlocksCache(_currentWeekStart);
         return _normalizeBlock(saved);
     } catch (e) {
         console.error('[weekly] createBlock:', e);
@@ -150,7 +296,7 @@ export async function updateBlock(blockId, updates, scope = null) {
             body: JSON.stringify(body),
         });
         if (!saved) return null;
-        _blocksCache.delete(_currentWeekStart);
+        invalidateBlocksCache(_currentWeekStart);
         return _normalizeBlock(saved);
     } catch (e) {
         console.error('[weekly] updateBlock:', e);
@@ -163,13 +309,56 @@ export async function removeBlock(blockId, scope = null) {
     try {
         const path = scope ? `/blocks/${blockId}?scope=${scope}` : `/blocks/${blockId}`;
         await _apiFetch(path, { method: 'DELETE' });
-        _blocksCache.delete(_currentWeekStart);
+        invalidateBlocksCache(_currentWeekStart);
         return true;
     } catch (e) {
         console.error('[weekly] removeBlock:', e);
         alert(`No se pudo eliminar el bloque: ${e.message}`);
         return false;
     }
+}
+
+// Converts a WeeklyBlockUnified entry (source=task|activity) to the display shape.
+// start_at is stored as a naive datetime string (no Z suffix) — parsed as local time.
+function _normalizeLogBlock(b) {
+    const hh        = n => String(n).padStart(2, '0');
+    const startDate = new Date(b.start_at);
+    const startTime = `${hh(startDate.getHours())}:${hh(startDate.getMinutes())}`;
+
+    const endMs   = startDate.getTime() + b.duration_minutes * 60_000;
+    const endDate = new Date(endMs);
+    // Clamp to 23:59 so the block never overflows the visible day grid.
+    const endH    = Math.min(endDate.getHours(), 23);
+    const endTime = `${hh(endH)}:${hh(endDate.getMinutes())}`;
+
+    const isTask = b.source === 'task';
+    return {
+        id:               b.id,
+        week_start:       b.start_at.slice(0, 10),
+        day:              startDate.getDay(),
+        block_type:       isTask ? 'task' : 'activity',
+        task_id:          isTask ? b.source_ref_id : null,
+        activity_id:      isTask ? null : b.source_ref_id,
+        title:            b.title,
+        color:            b.color ?? null,
+        start_time:       startTime,
+        end_time:         endTime,
+        notes:            null,
+        priority:         b.metadata?.priority ?? null,
+        column_status:    b.metadata?.column_status ?? null,
+        item_type:        b.metadata?.activity_type ?? null,
+        is_virtual:       false,
+        is_master:        false,
+        series_id:        null,
+        recurrence:       null,
+        recurrence_until: null,
+        rrule_string:     null,
+        dtstart:          null,
+        exception_dates:  [],
+        parent_block_id:  null,
+        source:           b.source,
+        is_log:           true,
+    };
 }
 
 function _normalizeBlock(b) {
@@ -199,6 +388,12 @@ function _normalizeBlock(b) {
         exception_dates:  b.exception_dates  ?? [],
         parent_block_id:  b.parent_block_id  ?? null,
     };
+}
+
+function _debugWeekly() {
+    try {
+        return new URLSearchParams(window.location.search).get('debug') === 'weekly';
+    } catch { return false; }
 }
 
 function _trimTime(t) {

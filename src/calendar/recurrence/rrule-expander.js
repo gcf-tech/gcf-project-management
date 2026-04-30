@@ -79,6 +79,18 @@ function _expandOne(master, utcStart, utcEnd) {
     }
 
     const occurrences = set.between(utcStart, utcEnd, true);
+
+    // DEBUG — remove before merge (enable with ?debug=weekly in URL)
+    if (_debugWeekly()) {
+        console.log('[rrule-expander] _expandOne master.id=%s', master.id);
+        console.log('[rrule-expander]   dtstart resolved:', dtstart.toISOString());
+        console.log('[rrule-expander]   utcStart:', utcStart.toISOString(), 'utcEnd:', utcEnd.toISOString());
+        console.log('[rrule-expander]   occurrences.length:', occurrences.length);
+        if (occurrences.length > 0) {
+            console.log('[rrule-expander]   first occurrence raw:', occurrences[0].toISOString());
+        }
+    }
+
     return occurrences.map(occ => {
         const occIso = _isoFromUtc(occ);
         return {
@@ -102,6 +114,12 @@ function _resolveDtstart(master) {
 
 function _utcMidnight(date) {
     return new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+}
+
+function _debugWeekly() {
+    try {
+        return new URLSearchParams(window.location.search).get('debug') === 'weekly';
+    } catch { return false; }
 }
 
 function _utcMidnightFromIso(isoStr) {

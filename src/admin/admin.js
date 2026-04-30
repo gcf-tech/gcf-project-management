@@ -3,7 +3,7 @@
 import {
     fetchAdminUsers,
     fetchTeams, createTeam, updateTeam, deleteTeam,
-    addTeamMember, removeTeamMember, setUserRole,
+    addTeamMember, removeTeamMember, setUserRole, syncUserFromNC,
 } from '../dashboard/dashApi.js';
 import { escHtml as _esc, initials as _initials } from '../shared/utils.js';
 let _user     = null;
@@ -176,6 +176,9 @@ function _memberRow(m, teamId, viewerRole, viewerNcId) {
                 <button class="dropdown-item" data-action="change-role" data-uid="${uid}" data-team-id="${teamId}">
                     <i class="fas fa-user-tag"></i> Cambiar de rol
                 </button>
+                <button class="dropdown-item" data-action="sync-nc" data-uid="${uid}" data-team-id="${teamId}">
+                    <i class="fas fa-sync-alt"></i> Sincronizar NC
+                </button>
                 <div class="dropdown-divider"></div>
                 <button class="dropdown-item dropdown-item-danger" data-action="remove-member" data-uid="${uid}" data-team-id="${teamId}">
                     <i class="fas fa-user-minus"></i> Eliminar del equipo
@@ -313,6 +316,21 @@ function _bindTeamEvents(content, teamId, container, allUsers) {
             document.getElementById(`cancelRole_${uid}`)?.addEventListener('click', () => {
                 menu?.classList.remove('open');
             });
+        });
+    });
+
+    // ── Sincronizar NC ────────────────────────────────────────────────────────
+    content.querySelectorAll(`[data-action="sync-nc"][data-team-id="${tid}"]`).forEach(btn => {
+        btn.addEventListener('click', async e => {
+            e.stopPropagation();
+            _closeAllDropdowns(content);
+            const uid  = btn.dataset.uid;
+            const name = allUsers.find(u => String(u.id) === uid)?.displayName ?? uid;
+            try {
+                const res = await syncUserFromNC(uid);
+                await _loadMyTeam(container);
+                alert(`${name} sincronizado: rol → ${res.user.role}`);
+            } catch (err) { alert('Error al sincronizar: ' + err.message); }
         });
     });
 

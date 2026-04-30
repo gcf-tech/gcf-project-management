@@ -3,6 +3,10 @@
 import { STATE }      from '../core/state.js';
 import { updateKPIs } from '../kpi/kpi.js';
 import { formatTime, formatDate, isOverdue, getActivityTypeLabel, formatTimeCompact, formatLogDate, formatRelativeTime, formatTimeOfDay } from '../shared/utils.js';
+import {
+    sortItems, getSort, setSort, resetSort, isDefaultSort,
+    CRITERIA_ACTIVE, CRITERIA_COMPLETED,
+} from './column-sort.js';
 
 // Columnas que separan tareas completadas en acordeón
 const ACCORDION_COLUMNS = ['actively-working', 'activities'];
@@ -15,6 +19,141 @@ function _isCompletedTask(task) {
     return task.column === 'completed';
 }
 
+// ── Sort menu ─────────────────────────────────────────────────────────────────
+
+const _CRITERION_LABELS = {
+    title:        { label: 'Nombre',    asc: 'A → Z',                desc: 'Z → A'                },
+    created_at:   { label: 'Creación',  asc: 'Más antiguo primero',  desc: 'Más reciente primero'  },
+    deadline:     { label: 'Deadline',  asc: 'Más próximo',          desc: 'Más lejano'            },
+    completed_at: { label: 'Completado',asc: 'Más antiguo primero',  desc: 'Más reciente primero'  },
+};
+
+export function initBoardSortMenus() {
+    _injectSortMenu('actively-working', CRITERIA_ACTIVE);
+    _injectSortMenu('activities', CRITERIA_ACTIVE);
+}
+
+function _injectSortMenu(colKey, criteria) {
+    const header = document.querySelector(`.kanban-column[data-column="${colKey}"] .column-header`);
+    if (!header || header.querySelector('.sort-menu-wrapper')) return;
+
+    const wrapper  = _buildSortWrapper(colKey, criteria);
+    const countEl  = header.querySelector('.column-count');
+    header.insertBefore(wrapper, countEl);
+}
+
+function _buildSortWrapper(colKey, criteria) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'sort-menu-wrapper';
+    wrapper.dataset.colKey = colKey;
+
+    const btn = document.createElement('button');
+    btn.className = 'sort-menu-btn';
+    btn.dataset.action = 'toggle-sort-menu';
+    btn.dataset.colKey  = colKey;
+    btn.title = 'Ordenar';
+    btn.innerHTML = '<i class="fas fa-sort"></i><span class="sort-active-dot" aria-hidden="true"></span>';
+
+    const dropdown = _buildSortDropdown(colKey, criteria);
+    wrapper.appendChild(btn);
+    wrapper.appendChild(dropdown);
+    return wrapper;
+}
+
+function _buildSortDropdown(colKey, criteria) {
+    const menu = document.createElement('div');
+    menu.className = 'sort-menu-dropdown';
+    menu.id = `sort-menu-${colKey}`;
+
+    let prevGroup = null;
+    criteria.forEach(c => {
+        const info  = _CRITERION_LABELS[c];
+        const group = document.createElement('div');
+        group.className = 'sort-menu-group';
+
+        if (prevGroup) {
+            const sep = document.createElement('div');
+            sep.className = 'sort-menu-group-sep';
+            menu.appendChild(sep);
+        }
+
+        const groupLabel = document.createElement('div');
+        groupLabel.className = 'sort-menu-group-label';
+        groupLabel.textContent = info.label;
+        group.appendChild(groupLabel);
+
+        ['asc', 'desc'].forEach(dir => {
+            const item = document.createElement('button');
+            item.className = 'sort-menu-item';
+            item.dataset.action    = 'set-column-sort';
+            item.dataset.colKey    = colKey;
+            item.dataset.criterion = c;
+            item.dataset.direction = dir;
+            item.innerHTML = `<i class="fas fa-check sort-item-check" aria-hidden="true"></i>${info[dir]}`;
+            group.appendChild(item);
+        });
+
+        menu.appendChild(group);
+        prevGroup = group;
+    });
+
+    const sep = document.createElement('div');
+    sep.className = 'sort-menu-sep';
+    menu.appendChild(sep);
+
+    const resetBtn = document.createElement('button');
+    resetBtn.className = 'sort-menu-item sort-menu-reset';
+    resetBtn.dataset.action = 'reset-column-sort';
+    resetBtn.dataset.colKey  = colKey;
+    resetBtn.innerHTML = '<i class="fas fa-undo" aria-hidden="true"></i>Restablecer orden por defecto';
+    menu.appendChild(resetBtn);
+
+    return menu;
+}
+
+export function openSortMenu(colKey) {
+    const dropdown = document.getElementById(`sort-menu-${colKey}`);
+    const isOpen   = dropdown?.classList.contains('open');
+    closeSortMenus();
+    if (!isOpen) dropdown?.classList.add('open');
+}
+
+export function closeSortMenus() {
+    document.querySelectorAll('.sort-menu-dropdown.open').forEach(el => el.classList.remove('open'));
+}
+
+export function applyColumnSort(colKey, criterion, direction) {
+    setSort(colKey, { criterion, direction });
+}
+
+export function resetColumnSort(colKey) {
+    resetSort(colKey);
+}
+
+function _syncSortButtonStates() {
+    ['actively-working', 'activities'].forEach(colKey => {
+        const sort = getSort(colKey);
+        const isDef = isDefaultSort(colKey, sort);
+
+        const dot = document.querySelector(`.sort-menu-wrapper[data-col-key="${colKey}"] .sort-active-dot`);
+        if (dot) dot.classList.toggle('visible', !isDef);
+
+        const menu = document.getElementById(`sort-menu-${colKey}`);
+        if (!menu) return;
+
+        menu.querySelectorAll('.sort-menu-item[data-criterion]').forEach(item => {
+            const active = item.dataset.criterion === sort.criterion
+                        && item.dataset.direction  === sort.direction;
+            item.classList.toggle('sort-item-active', active);
+        });
+
+        const resetBtn = menu.querySelector('.sort-menu-reset');
+        if (resetBtn) resetBtn.classList.toggle('sort-reset-active', !isDef);
+    });
+}
+
+// ── Board render ──────────────────────────────────────────────────────────────
+
 export function renderBoard() {
     const columns = {
         'actively-working': document.getElementById('columnActivelyWorking'),
@@ -23,27 +162,48 @@ export function renderBoard() {
     };
 
     Object.values(columns).forEach(col => (col.innerHTML = ''));
-    const counts      = { 'actively-working': 0, 'working-now': 0, 'activities': 0 };
-    const completedBy = { 'actively-working': [], 'activities': [] };
+
+    // Clasificar tareas por columna y estado
+    const activeTasks    = { 'actively-working': [], 'working-now': [], 'activities': [] };
+    const completedTasks = { 'actively-working': [], 'activities': [] };
 
     STATE.tasks.forEach(task => {
-        const displayColumn = counts.hasOwnProperty(task.column) ? task.column : 'actively-working';
-        const col = columns[displayColumn];
-        if (!col) return;
-
-        if (ACCORDION_COLUMNS.includes(displayColumn) && _isCompletedTask(task)) {
-            completedBy[displayColumn].push(task);
+        const col = activeTasks.hasOwnProperty(task.column) ? task.column : 'actively-working';
+        if (ACCORDION_COLUMNS.includes(col) && _isCompletedTask(task)) {
+            completedTasks[col].push(task);
         } else {
-            col.appendChild(createTaskCard(task));
-            counts[displayColumn]++;
+            activeTasks[col].push(task);
         }
+    });
+
+    // Aplicar sort a cada sección
+    const sorted = {
+        'actively-working': sortItems(activeTasks['actively-working'], 'actively-working'),
+        'working-now':      activeTasks['working-now'],
+        'activities':       sortItems(activeTasks['activities'], 'activities'),
+    };
+    const sortedCompleted = {
+        'actively-working': sortItems(completedTasks['actively-working'], 'actively-working-completed'),
+        'activities':       sortItems(completedTasks['activities'], 'activities-completed'),
+    };
+
+    // Renderizar tareas activas
+    const counts = { 'actively-working': 0, 'working-now': 0, 'activities': 0 };
+    Object.entries(sorted).forEach(([colKey, tasks]) => {
+        const col = columns[colKey];
+        if (!col) return;
+        tasks.forEach(task => {
+            col.appendChild(createTaskCard(task));
+            counts[colKey]++;
+        });
     });
 
     // Acordeones al final de cada columna que los admite
     ACCORDION_COLUMNS.forEach(colKey => {
-        const col = columns[colKey];
-        if (completedBy[colKey].length > 0) {
-            col.appendChild(_createCompletedAccordion(colKey, completedBy[colKey]));
+        const col   = columns[colKey];
+        const tasks = sortedCompleted[colKey];
+        if (tasks.length > 0) {
+            col.appendChild(_createCompletedAccordion(colKey, tasks));
         }
     });
 
@@ -52,7 +212,7 @@ export function renderBoard() {
     document.getElementById('countActivities').textContent      = counts['activities'];
 
     Object.entries(columns).forEach(([key, col]) => {
-        const total = counts[key] + (completedBy[key]?.length ?? 0);
+        const total = counts[key] + (completedTasks[key]?.length ?? 0);
         if (total === 0) {
             col.innerHTML = `
                 <div class="column-empty">
@@ -62,6 +222,7 @@ export function renderBoard() {
         }
     });
 
+    _syncSortButtonStates();
     updateKPIs();
 }
 
@@ -72,18 +233,55 @@ export function toggleCompletedAccordion(colKey) {
 }
 
 function _createCompletedAccordion(colKey, tasks) {
-    const isOpen  = _accordionOpen[colKey];
+    const isOpen       = _accordionOpen[colKey];
+    const completedKey = colKey + '-completed';
+    const sort         = getSort(completedKey);
+    const isDef        = isDefaultSort(completedKey, sort);
+
     const wrapper = document.createElement('div');
     wrapper.className = `completed-accordion${isOpen ? ' open' : ''}`;
     wrapper.dataset.colKey = colKey;
 
-    const header = document.createElement('button');
+    // Header: div container (no es button para poder anidar buttons)
+    const header = document.createElement('div');
     header.className = 'completed-accordion-header';
-    header.dataset.action = 'toggle-completed-accordion';
-    header.dataset.colKey  = colKey;
-    header.innerHTML = `
+
+    const toggleBtn = document.createElement('button');
+    toggleBtn.className = 'completed-accordion-toggle';
+    toggleBtn.dataset.action = 'toggle-completed-accordion';
+    toggleBtn.dataset.colKey  = colKey;
+    toggleBtn.innerHTML = `
         <span><i class="fas fa-check-circle"></i> Completadas (${tasks.length})</span>
         <i class="fas fa-chevron-down completed-accordion-chevron"></i>`;
+
+    // Sort menu del acordeón
+    const sortWrapper = document.createElement('div');
+    sortWrapper.className = 'sort-menu-wrapper';
+    sortWrapper.dataset.colKey = completedKey;
+
+    const sortBtn = document.createElement('button');
+    sortBtn.className = 'sort-menu-btn';
+    sortBtn.dataset.action = 'toggle-sort-menu';
+    sortBtn.dataset.colKey  = completedKey;
+    sortBtn.title = 'Ordenar completadas';
+    sortBtn.innerHTML = `<i class="fas fa-sort" aria-hidden="true"></i><span class="sort-active-dot${isDef ? '' : ' visible'}" aria-hidden="true"></span>`;
+
+    const dropdown = _buildSortDropdown(completedKey, CRITERIA_COMPLETED);
+
+    // Marcar ítem activo en el dropdown recién construido
+    dropdown.querySelectorAll('.sort-menu-item[data-criterion]').forEach(item => {
+        const active = item.dataset.criterion === sort.criterion
+                    && item.dataset.direction  === sort.direction;
+        item.classList.toggle('sort-item-active', active);
+    });
+    const resetBtn = dropdown.querySelector('.sort-menu-reset');
+    if (resetBtn) resetBtn.classList.toggle('sort-reset-active', !isDef);
+
+    sortWrapper.appendChild(sortBtn);
+    sortWrapper.appendChild(dropdown);
+
+    header.appendChild(toggleBtn);
+    header.appendChild(sortWrapper);
 
     const body = document.createElement('div');
     body.className = 'completed-accordion-body';

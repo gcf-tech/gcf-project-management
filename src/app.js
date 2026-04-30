@@ -4,7 +4,11 @@ import { STATE }            from './core/state.js';
 import { load }             from './core/storage.js';
 import { fetchTasks, reopenTask, completeTask } from './api/api.js';
 import { drainPendingTimeOps } from './api/timeLogs.js';
-import { renderBoard, toggleCompletedAccordion } from './board/render.js';
+import {
+    renderBoard, toggleCompletedAccordion,
+    initBoardSortMenus, openSortMenu, closeSortMenus,
+    applyColumnSort, resetColumnSort,
+} from './board/render.js';
 import { setupDragAndDrop } from './board/dragDrop.js';
 import { initAuth }         from './auth/auth.js';
 import { CONFIG }           from './core/config.js';
@@ -32,6 +36,10 @@ import {
 import { confirmCompletion } from './timer/completionModal.js';
 import { renderCalendar, handleCalendarClick } from './calendar/calendar-router.js';
 import { submitBlock, handleWeeklyModalEvent } from './weekly/weekly-modal.js';
+import { pcGet } from './core/persistent-cache.js';
+import {
+    primePrefsCache, primeBlocksCache, weekStartIso as computeWeekStartIso,
+} from './weekly/weekly-data.js';
 import { initRetroAccordion } from './tasks/retroactiveAccordion.js';
 import { openSettings, closeSettings, saveSettings } from './settings/settings.js';
 
@@ -77,6 +85,37 @@ function navigateTo(view) {
     }
 }
 
+async function _maybeBootWeeklyFromCache() {
+    const userId = _currentUser?.id ?? 'anon';
+    let cachedPrefs = null;
+    try {
+        cachedPrefs = await pcGet(`weekly:prefs:${userId}`);
+    } catch { /* IDB unavailable → skip boot, falls back to cold path */ }
+
+    if (!cachedPrefs || cachedPrefs.calendar_view !== 'week') return false;
+
+    primePrefsCache(cachedPrefs);
+
+    // Pre-warm the in-memory mirror with the current week's blocks so _render
+    // can skip its skeleton and paint real data on the first frame.
+    try {
+        const weekIso = computeWeekStartIso(new Date(), cachedPrefs);
+        const cachedBlocks = await pcGet(`weekly:blocks:${userId}:${weekIso}`);
+        if (cachedBlocks?.blocks) primeBlocksCache(weekIso, cachedBlocks);
+    } catch { /* ignore */ }
+
+    document.querySelectorAll('.app-view').forEach(v => v.classList.remove('active'));
+    document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+    const weeklyContainer = document.getElementById('view-weekly');
+    if (!weeklyContainer) return false;
+    weeklyContainer.classList.add('active');
+    document.querySelector('.nav-tab[data-view="weekly"]')?.classList.add('active');
+
+    // Fire-and-forget render (don't block init() on the actual paint).
+    renderCalendar(weeklyContainer, { prefetch: true });
+    return true;
+}
+
 function setupNav(user, isTechTeam) {
     if (user.role === 'leader' || user.role === 'admin') {
         document.querySelectorAll('.nav-leader').forEach(el => el.style.display = '');
@@ -105,6 +144,9 @@ function setSubtaskSelection(taskId, subtaskId) {
 async function handleClick(e) {
     if (!e.target.closest('.task-menu-wrapper')) {
         document.querySelectorAll('.task-dropdown.open').forEach(d => d.classList.remove('open'));
+    }
+    if (!e.target.closest('.sort-menu-wrapper')) {
+        closeSortMenus();
     }
 
     const el = e.target.closest('[data-action]');
@@ -172,6 +214,21 @@ async function handleClick(e) {
 
         // Acordeón de completadas
         case 'toggle-completed-accordion': toggleCompletedAccordion(el.dataset.colKey); break;
+
+        // Sort de columnas del Board
+        case 'toggle-sort-menu':  openSortMenu(el.dataset.colKey); break;
+        case 'set-column-sort': {
+            applyColumnSort(el.dataset.colKey, el.dataset.criterion, el.dataset.direction);
+            closeSortMenus();
+            renderBoard();
+            break;
+        }
+        case 'reset-column-sort': {
+            resetColumnSort(el.dataset.colKey);
+            closeSortMenus();
+            renderBoard();
+            break;
+        }
 
         // Deck
         case 'open-import-deck':          await openImportDeckModal(); break;
@@ -241,6 +298,12 @@ async function init() {
         _currentUser = user;
     }
 
+    // Boot the user's default calendar view straight from IndexedDB BEFORE
+    // we block on the heavy fetchTasks/fetchTeams round-trips. If the cached
+    // pref says calendar_view='week' the weekly tab paints with cached blocks
+    // in <200ms, well before any network response arrives.
+    await _maybeBootWeeklyFromCache();
+
     load();
 
     let isTechTeam = false;
@@ -267,6 +330,7 @@ async function init() {
     
     initRetroAccordion();
     restoreTimers();
+    initBoardSortMenus();
     renderBoard();
     setupDragAndDrop();
 
@@ -281,6 +345,12 @@ async function init() {
     });
 
     window.addEventListener('beforeunload', flushActiveTimers);
+
+    // Open the task/activity edit modal when the user clicks a time-log block in
+    // the Weekly view (source=task|activity). Dispatched by handleWeeklyClick.
+    window.addEventListener('weekly:open-source-item', e => {
+        openEditTaskModal(e.detail.id);
+    });
 
     document.addEventListener('click',  handleClick);
     document.addEventListener('change', handleChange);

@@ -1,23 +1,51 @@
 /** Business hours: fetches config from backend and converts to user's local TZ via Intl. */
 
 import { CONFIG } from '../core/config.js';
+import { pcGet, pcSet } from '../core/persistent-cache.js';
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
-let _cache   = null;
-let _cacheAt = 0;
+const CACHE_KEY    = 'weekly:biz-hours';
+
+let _cache    = null;
+let _cacheAt  = 0;
+let _inFlight = null;
 
 export async function fetchBusinessHours() {
-    if (_cache && Date.now() - _cacheAt < CACHE_TTL_MS) return _cache;
-    try {
-        const res = await fetch(`${CONFIG.BACKEND_BASE_URL}/config/business-hours`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        _cache = await res.json();
-    } catch (e) {
-        console.error('[business-hours] fetch failed, using defaults:', e);
-        _cache = { timezone: 'America/New_York', start_hour: 8, end_hour: 17 };
+    if (_cache && Date.now() - _cacheAt < CACHE_TTL_MS) {
+        console.debug('[biz-hours] cache hit (memory)');
+        return _cache;
     }
-    _cacheAt = Date.now();
-    return _cache;
+    if (_inFlight) {
+        console.debug('[biz-hours] cache hit (in-flight dedup)');
+        return _inFlight;
+    }
+
+    _inFlight = (async () => {
+        // 1) IndexedDB hit (cross-session warm load)
+        const idbHit = await pcGet(CACHE_KEY);
+        if (idbHit) {
+            console.debug('[biz-hours] cache hit (IndexedDB)');
+            _cache   = idbHit;
+            _cacheAt = Date.now();
+            return idbHit;
+        }
+
+        // 2) Cold — fetch from backend
+        console.debug('[biz-hours] cache miss → network');
+        try {
+            const res = await fetch(`${CONFIG.BACKEND_BASE_URL}/config/business-hours`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            _cache = await res.json();
+        } catch (e) {
+            console.error('[business-hours] fetch failed, using defaults:', e);
+            _cache = { timezone: 'America/New_York', start_hour: 8, end_hour: 17 };
+        }
+        _cacheAt = Date.now();
+        pcSet(CACHE_KEY, _cache, CACHE_TTL_MS).catch(() => {});
+        return _cache;
+    })().finally(() => { _inFlight = null; });
+
+    return _inFlight;
 }
 
 /**

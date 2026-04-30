@@ -1,6 +1,8 @@
 /** OAuth2 con Nextcloud: token en localStorage (persiste entre refreshes en iframes). */
 
 import { CONFIG } from '../core/config.js';
+import { pcClear } from '../core/persistent-cache.js';
+import { clearCalendarCache } from '../calendar/data/calendar-events-api.js';
 
 const TOKEN_KEY       = 'nc_access_token';
 const REFRESH_KEY     = 'nc_refresh_token';
@@ -259,6 +261,12 @@ export async function initAuth() {
 
 export function logout() {
     _clearAllAuthKeys();
+    // Drop weekly IndexedDB so the next user doesn't see the previous one's data.
+    // Fire-and-forget: the redirect below races the async clear, but per-user
+    // keys (`weekly:*:${userId}`) already prevent leakage across accounts.
+    pcClear('weekly:').catch(() => {});
+    // Drop the in-memory calendar events cache (synchronous — runs before redirect).
+    clearCalendarCache();
     if (IS_DEV) {
         console.warn('[auth] logout() en DEV: no se redirige al OAuth de producción. Recarga manualmente.');
         return;

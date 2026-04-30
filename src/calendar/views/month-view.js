@@ -3,6 +3,7 @@
 import { format, isToday, isSameMonth, startOfMonth, endOfMonth } from 'date-fns';
 import { getMonthGrid } from '../shared/month-grid.js';
 import { fetchAggregate, buildAggMap } from '../data/aggregate-api.js';
+import { maybePrefetchOnFirstMount } from '../data/calendar-events-api.js';
 import { renderPeriodNav } from '../shared/period-nav.js';
 
 const MONTH_NAMES = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
@@ -45,6 +46,8 @@ async function _loadAndRender() {
     const y = _date.getFullYear(), m = _date.getMonth();
     const from = startOfMonth(new Date(y, m, 1));
     const to   = endOfMonth(from);
+    // Warm the calendar events cache for the current month on first mount.
+    maybePrefetchOnFirstMount('month', from, to);
     const entries = await fetchAggregate(from, to);
     const aggMap  = buildAggMap(entries);
     _renderFull(y, m, aggMap);

@@ -1,10 +1,11 @@
 /** Single-day timeline view — reuses weekly-data public API. */
 
 import { format, isToday } from 'date-fns';
-import { fetchPreferences, getPreferences, fetchBlocks, getBlocks, timeToMinutes } from '../../weekly/weekly-data.js';
+import { getPrefsOnce, getPreferences, fetchBlocks, getBlocks, timeToMinutes } from '../../weekly/weekly-data.js';
 import { renderPeriodNav } from '../shared/period-nav.js';
 import { computeBlockLayout } from '../../weekly/weekly-layout.js';
 import { openBlockModal } from '../../weekly/weekly-modal.js';
+import { maybePrefetchOnFirstMount } from '../data/calendar-events-api.js';
 
 const HOUR_START   = 6;
 const HOUR_END     = 23;
@@ -42,11 +43,14 @@ export function navigateDayToday() { _date = new Date(); _render(); }
 async function _render() {
     if (!_container) return;
 
-    await fetchPreferences();
+    await getPrefsOnce();
     const prefs      = getPreferences();
     const iso        = format(_date, 'yyyy-MM-dd');
     const weekIso    = _weekStartIso(_date, prefs);
     await fetchBlocks(weekIso);
+
+    // Warm the calendar events backend cache on first mount of this view.
+    maybePrefetchOnFirstMount('day', _date, _date);
 
     const dayOfWeek  = _date.getDay();
     const blocks     = getBlocks().filter(b => b.day === dayOfWeek);
