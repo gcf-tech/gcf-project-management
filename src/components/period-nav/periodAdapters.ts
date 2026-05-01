@@ -41,7 +41,9 @@ function parseDateInput(value: string): Date {
 
 /** Parse "yyyy-MM" input value → first of that month at noon. */
 function parseMonthInput(value: string): Date {
-  const [y, m] = value.split('-').map(Number);
+  const parts = value.split('-').map(Number);
+  const y = parts[0] ?? 0;
+  const m = parts[1] ?? 1;
   return new Date(y, m - 1, 1, 12);
 }
 

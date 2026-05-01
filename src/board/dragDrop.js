@@ -3,6 +3,7 @@
 import { STATE }        from '../core/state.js';
 import { updateColumn } from '../api/api.js';
 import { renderBoard }  from './render.js';
+import { refetchColumns } from './queryClient.ts';
 
 let draggedTaskId = null;
 
@@ -52,7 +53,11 @@ export function setupDragAndDrop() {
 
         if (!_isValidMove(task, targetColumn)) return;
 
+        const sourceColumn = task.column;
         await updateColumn(draggedTaskId, targetColumn);
+
+        // Targeted invalidation for source + destination columns, then broad sync.
+        refetchColumns(sourceColumn, targetColumn);
         renderBoard();
     });
 }
